@@ -1,0 +1,36 @@
+# Byte-compiled / optimized / DLL files
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.log
+
+# Maven
+.mvn/
+!.mvn/wrapper/maven-wrapper.jar
+!.mvn/wrapper/maven-wrapper.properties
+
+# Node / Vite Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# IDEs & Editors
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Environment variables & Local database data
+.env
+.env.local
+pgdata/
+
+# Application logs
+logs/
+*.out
