@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Film, Sparkles } from 'lucide-react';
 import { createShow, ShowResponse } from '../services/api';
+import { showAlert } from '../utils/alert';
 
 interface ShowCreatorProps {
   onShowCreated: (show: ShowResponse) => void;
@@ -33,9 +34,13 @@ export const ShowCreator: React.FC<ShowCreatorProps> = ({ onShowCreated }) => {
         price_paise: priceRupees * 100,
         per_user_limit: perUserLimit,
       });
+      showAlert.success(
+        'Show Published Successfully! 🎟️',
+        `'${created.name}' is now live with ${created.total_seats} seats ready for on-sale booking.`
+      );
       onShowCreated(created);
     } catch (err: any) {
-      alert(`Failed to create show: ${err.message}`);
+      showAlert.error('Show Creation Failed', err.message);
     } finally {
       setIsSubmitting(false);
     }

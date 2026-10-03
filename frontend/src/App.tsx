@@ -22,6 +22,8 @@ import { ContentionSimulator } from './components/ContentionSimulator';
 import { ObservabilityHUD } from './components/ObservabilityHUD';
 import { ShowCreator } from './components/ShowCreator';
 
+import { showAlert } from './utils/alert';
+
 const STORAGE_KEY_SHOW_ID = 'seatrush_current_show_id';
 const STORAGE_KEY_USER_TOKEN = 'seatrush_user_token';
 
@@ -52,6 +54,7 @@ export function App() {
   const handleUserTokenChange = (token: string) => {
     setUserToken(token);
     localStorage.setItem(STORAGE_KEY_USER_TOKEN, token);
+    showAlert.toast(`Switched active user to '${token}'`, 'info');
     loadShow(currentShowId, token);
     refreshShowList(token);
   };
@@ -62,6 +65,7 @@ export function App() {
     localStorage.setItem(STORAGE_KEY_SHOW_ID, showId);
     setSelectedSeats([]);
     setFeedback(null);
+    showAlert.toast(`Event switched`, 'info');
   };
 
   // Fetch show details
@@ -158,6 +162,33 @@ export function App() {
         message: `Reservation Confirmed! Reserved ${res.seats.join(', ')} for ₹${(res.amount_paise / 100).toFixed(2)} (ID: ${res.reservation_id.slice(0, 8)}...)`,
       });
       addLog(`CONFIRMED: User '${userToken}' booked ${res.seats.join(', ')} (₹${(res.amount_paise / 100).toFixed(2)})`);
+
+      // SweetAlert2 Success Receipt Modal
+      const receiptHtml = `
+        <div class="text-left space-y-2 mt-2 p-3 bg-gray-900 rounded-xl border border-gray-800">
+          <div class="flex justify-between text-xs text-gray-400">
+            <span>Event:</span>
+            <span class="font-bold text-white">${show.name}</span>
+          </div>
+          <div class="flex justify-between text-xs text-gray-400">
+            <span>Seats:</span>
+            <span class="font-bold text-blue-400 font-mono">${res.seats.join(', ')}</span>
+          </div>
+          <div class="flex justify-between text-xs text-gray-400">
+            <span>Customer:</span>
+            <span class="font-bold text-purple-300">${res.user_id}</span>
+          </div>
+          <div class="flex justify-between text-xs text-gray-400 border-t border-gray-800 pt-1.5">
+            <span>Total Paid:</span>
+            <span class="font-extrabold text-emerald-400 font-mono text-sm">₹${(res.amount_paise / 100).toFixed(2)}</span>
+          </div>
+          <div class="text-[10px] text-gray-500 font-mono break-all pt-1">
+            Ref: ${res.reservation_id}
+          </div>
+        </div>
+      `;
+      showAlert.success('Reservation Confirmed! 🎟️', '', receiptHtml);
+
       setSelectedSeats([]);
       setIdempotencyKey(`key-${Date.now()}`);
       loadShow();
@@ -168,6 +199,13 @@ export function App() {
         message: `${err.reason || 'DECLINED'}: ${err.message}`,
       });
       addLog(`DECLINED (${err.reason || err.status}): ${err.message}`);
+
+      // SweetAlert2 Conflict / Error Modal
+      showAlert.error(
+        err.reason === 'USER_LIMIT_EXCEEDED' ? 'Booking Limit Exceeded ⚠️' : 'Reservation Conflict 🛑',
+        err.message,
+        err.conflictingSeats
+      );
     } finally {
       setIsBooking(false);
     }
@@ -175,6 +213,14 @@ export function App() {
 
   const handleCancelLast = async () => {
     if (!lastReservationId) return;
+
+    const confirmed = await showAlert.confirm(
+      'Cancel Reservation?',
+      'Are you sure you want to release these seats back to available inventory?',
+      'Yes, Cancel It'
+    );
+    if (!confirmed) return;
+
     try {
       const res = await cancelReservation(lastReservationId, userToken);
       setFeedback({
@@ -182,6 +228,7 @@ export function App() {
         message: `Cancelled reservation ${res.reservation_id.slice(0, 8)}... Freed seats: ${res.freed_seats.join(', ')}`,
       });
       addLog(`CANCELLED: User '${userToken}' released seats ${res.freed_seats.join(', ')}`);
+      showAlert.toast(`Released seats ${res.freed_seats.join(', ')}`, 'success');
       setLastReservationId(null);
       loadShow();
       refreshShowList();
@@ -191,10 +238,18 @@ export function App() {
         message: `Cancellation failed: ${err.message}`,
       });
       addLog(`CANCEL FAILED: ${err.message}`);
+      showAlert.error('Cancellation Failed', err.message);
     }
   };
 
   const handleCancelSpecificReservation = async (reservationId: string) => {
+    const confirmed = await showAlert.confirm(
+      'Admin Revoke Reservation?',
+      `Are you sure you want to revoke reservation ${reservationId.slice(0, 8)}... and return seats to inventory?`,
+      'Yes, Revoke Reservation'
+    );
+    if (!confirmed) return;
+
     try {
       const res = await cancelReservation(reservationId, userToken);
       setFeedback({
@@ -202,6 +257,7 @@ export function App() {
         message: `Cancelled reservation ${res.reservation_id.slice(0, 8)}... Freed seats: ${res.freed_seats.join(', ')}`,
       });
       addLog(`ADMIN OVERRIDE: '${userToken}' cancelled reservation ${res.reservation_id.slice(0, 8)}... (Freed seats: ${res.freed_seats.join(', ')})`);
+      showAlert.toast(`Admin revoked reservation (Freed: ${res.freed_seats.join(', ')})`, 'success');
       if (lastReservationId === reservationId) {
         setLastReservationId(null);
       }
@@ -213,6 +269,7 @@ export function App() {
         message: `Cancellation failed: ${err.message}`,
       });
       addLog(`CANCEL FAILED: ${err.message}`);
+      showAlert.error('Revocation Failed', err.message);
     }
   };
 
