@@ -6,7 +6,8 @@ import {
   CheckCircle,
   XCircle,
   Clock,
-  Layers
+  Layers,
+  ShieldCheck
 } from 'lucide-react';
 import {
   fetchShows,
@@ -41,14 +42,18 @@ export function App() {
   const [activeTab, setActiveTab] = useState<'simulator' | 'observability' | 'create'>('simulator');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
+  const isAdmin = userToken.toLowerCase().startsWith('admin');
+
   const addLog = (msg: string) => {
     setLogs((prev) => [msg, ...prev.slice(0, 50)]);
   };
 
-  // Sync token to localStorage
+  // Sync token to localStorage and re-fetch with new role privileges
   const handleUserTokenChange = (token: string) => {
     setUserToken(token);
     localStorage.setItem(STORAGE_KEY_USER_TOKEN, token);
+    loadShow(currentShowId, token);
+    refreshShowList(token);
   };
 
   // Sync show to localStorage
@@ -60,12 +65,12 @@ export function App() {
   };
 
   // Fetch show details
-  const loadShow = async (id?: string) => {
+  const loadShow = async (id?: string, token?: string) => {
     const targetId = id || currentShowId;
     if (!targetId) return;
 
     try {
-      const data = await fetchShowState(targetId);
+      const data = await fetchShowState(targetId, token || userToken);
       setShow(data);
       if (!currentShowId || currentShowId !== data.id) {
         setCurrentShowId(data.id);
@@ -77,9 +82,9 @@ export function App() {
   };
 
   // Refresh shows list
-  const refreshShowList = async () => {
+  const refreshShowList = async (token?: string) => {
     try {
-      const list = await fetchShows();
+      const list = await fetchShows(token || userToken);
       setAvailableShows(list);
 
       if (list.length > 0) {
@@ -128,7 +133,7 @@ export function App() {
       loadShow(currentShowId);
     }, 2500);
     return () => clearInterval(interval);
-  }, [currentShowId]);
+  }, [currentShowId, userToken]);
 
   const handleToggleSeat = (seatNumber: string) => {
     setSelectedSeats((prev) =>
@@ -189,6 +194,28 @@ export function App() {
     }
   };
 
+  const handleCancelSpecificReservation = async (reservationId: string) => {
+    try {
+      const res = await cancelReservation(reservationId, userToken);
+      setFeedback({
+        type: 'success',
+        message: `Cancelled reservation ${res.reservation_id.slice(0, 8)}... Freed seats: ${res.freed_seats.join(', ')}`,
+      });
+      addLog(`ADMIN OVERRIDE: '${userToken}' cancelled reservation ${res.reservation_id.slice(0, 8)}... (Freed seats: ${res.freed_seats.join(', ')})`);
+      if (lastReservationId === reservationId) {
+        setLastReservationId(null);
+      }
+      loadShow();
+      refreshShowList();
+    } catch (err: any) {
+      setFeedback({
+        type: 'error',
+        message: `Cancellation failed: ${err.message}`,
+      });
+      addLog(`CANCEL FAILED: ${err.message}`);
+    }
+  };
+
   const totalPriceRupees = show ? ((show.price_paise * selectedSeats.length) / 100).toFixed(2) : '0.00';
 
   return (
@@ -206,6 +233,11 @@ export function App() {
                 <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
                   High-Concurrency
                 </span>
+                {isAdmin && (
+                  <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-1 font-bold">
+                    <ShieldCheck className="w-3 h-3" /> Admin Mode
+                  </span>
+                )}
               </div>
               <p className="text-[11px] text-gray-400">Race-Free Distributed Ticket Booking Engine</p>
             </div>
@@ -233,9 +265,9 @@ export function App() {
             )}
 
             {/* User Token Switcher */}
-            <div className="flex items-center gap-2 bg-gray-900 border border-gray-800 rounded-xl px-3 py-1.5">
-              <User className="w-4 h-4 text-purple-400" />
-              <span className="text-xs text-gray-400">Auth Token:</span>
+            <div className={`flex items-center gap-2 bg-gray-900 border ${isAdmin ? 'border-purple-500/50 ring-1 ring-purple-500/30' : 'border-gray-800'} rounded-xl px-3 py-1.5`}>
+              <User className={`w-4 h-4 ${isAdmin ? 'text-purple-300' : 'text-purple-400'}`} />
+              <span className="text-xs text-gray-400">Auth:</span>
               <select
                 value={userToken}
                 onChange={(e) => handleUserTokenChange(e.target.value)}
@@ -244,7 +276,7 @@ export function App() {
                 <option value="user-alice" className="bg-gray-900">user-alice (Regular)</option>
                 <option value="user-bob" className="bg-gray-900">user-bob (Regular)</option>
                 <option value="user-charlie" className="bg-gray-900">user-charlie (Regular)</option>
-                <option value="admin" className="bg-gray-900">admin (Admin Role)</option>
+                <option value="admin" className="bg-gray-900 font-bold text-purple-400">admin (Admin Role)</option>
               </select>
             </div>
 
@@ -336,6 +368,8 @@ export function App() {
                 perUserLimit={show.per_user_limit}
                 onToggleSeat={handleToggleSeat}
                 disabled={isBooking}
+                isAdmin={isAdmin}
+                onCancelReservation={handleCancelSpecificReservation}
               />
             ) : (
               <div className="glass-panel p-12 text-center rounded-2xl space-y-4">

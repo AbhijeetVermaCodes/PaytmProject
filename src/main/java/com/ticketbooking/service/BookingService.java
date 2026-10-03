@@ -125,6 +125,15 @@ public class BookingService {
         long confirmedCount = 0;
         List<SeatDto> seatDtos = new ArrayList<>(seats.size());
 
+        boolean isAdmin = UserContext.isAdmin();
+        Map<String, String> reservationUserMap = Collections.emptyMap();
+        if (isAdmin) {
+            List<Reservation> reservations = reservationRepository.findByShowId(showId);
+            reservationUserMap = reservations.stream()
+                    .filter(r -> r.getStatus() == ReservationStatus.CONFIRMED || r.getStatus() == ReservationStatus.HELD)
+                    .collect(Collectors.toMap(Reservation::getId, Reservation::getUserId, (u1, u2) -> u1));
+        }
+
         Instant now = Instant.now();
         for (Seat s : seats) {
             SeatStatus effectiveStatus = s.getStatus();
@@ -138,7 +147,15 @@ public class BookingService {
                 case HELD -> heldCount++;
                 case CONFIRMED -> confirmedCount++;
             }
-            seatDtos.add(new SeatDto(s.getSeatNumber(), effectiveStatus.name().toLowerCase()));
+
+            String bookedBy = null;
+            String resId = null;
+            if (isAdmin && s.getReservationId() != null && effectiveStatus != SeatStatus.AVAILABLE) {
+                bookedBy = reservationUserMap.get(s.getReservationId());
+                resId = s.getReservationId();
+            }
+
+            seatDtos.add(new SeatDto(s.getSeatNumber(), effectiveStatus.name().toLowerCase(), bookedBy, resId));
         }
 
         boolean invariantHolds = (availableCount + heldCount + confirmedCount) == show.getTotalSeats();

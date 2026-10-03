@@ -1,6 +1,8 @@
 export interface SeatDto {
   seat_number: string;
   status: 'available' | 'held' | 'confirmed';
+  booked_by?: string;
+  reservation_id?: string;
 }
 
 export interface ShowResponse {
@@ -41,8 +43,12 @@ export interface ReadinessResponse {
 
 const BASE_URL = '';
 
-export async function fetchShows(): Promise<ShowResponse[]> {
-  const res = await fetch(`${BASE_URL}/shows`);
+export async function fetchShows(userToken?: string): Promise<ShowResponse[]> {
+  const headers: HeadersInit = {};
+  if (userToken) {
+    headers['Authorization'] = `Bearer ${userToken}`;
+  }
+  const res = await fetch(`${BASE_URL}/shows`, { headers });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.message || `Failed to list shows: ${res.status}`);
@@ -50,8 +56,12 @@ export async function fetchShows(): Promise<ShowResponse[]> {
   return res.json();
 }
 
-export async function fetchShowState(showId: string): Promise<ShowResponse> {
-  const res = await fetch(`${BASE_URL}/shows/${showId}`);
+export async function fetchShowState(showId: string, userToken?: string): Promise<ShowResponse> {
+  const headers: HeadersInit = {};
+  if (userToken) {
+    headers['Authorization'] = `Bearer ${userToken}`;
+  }
+  const res = await fetch(`${BASE_URL}/shows/${showId}`, { headers });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.message || `Failed to fetch show: ${res.status}`);
