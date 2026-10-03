@@ -28,6 +28,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Service
@@ -248,57 +249,65 @@ public class BookingService {
                     "One or more requested seats are already taken or held", unavailableSeats);
         }
 
-        // 4. Atomic per-user limit check: count user's active seats + requested seats <= show.getPerUserLimit()
-        int currentActiveSeats = reservationRepository.countActiveSeatsForUser(
-                userId, showId, List.of(ReservationStatus.CONFIRMED, ReservationStatus.HELD));
+        // 4. Atomic per-user limit check: serialized per (userId, showId)
+        synchronized (getUserLock(userId, showId)) {
+            int currentActiveSeats = reservationRepository.countActiveSeatsForUser(
+                    userId, showId, List.of(ReservationStatus.CONFIRMED, ReservationStatus.HELD));
 
-        if (currentActiveSeats + sortedSeatNumbers.size() > show.getPerUserLimit()) {
-            log.info("Reservation declined: user limit exceeded user={} active={} requested={} limit={}",
-                    userId, currentActiveSeats, sortedSeatNumbers.size(), show.getPerUserLimit());
-            throw new DomainConflictException("PER_USER_LIMIT_EXCEEDED",
-                    String.format("Reservation exceeds per-user limit of %d seats (currently holding %d, requested %d)",
-                            show.getPerUserLimit(), currentActiveSeats, sortedSeatNumbers.size()));
+            if (currentActiveSeats + sortedSeatNumbers.size() > show.getPerUserLimit()) {
+                log.info("Reservation declined: user limit exceeded user={} active={} requested={} limit={}",
+                        userId, currentActiveSeats, sortedSeatNumbers.size(), show.getPerUserLimit());
+                throw new DomainConflictException("PER_USER_LIMIT_EXCEEDED",
+                        String.format("Reservation exceeds per-user limit of %d seats (currently holding %d, requested %d)",
+                                show.getPerUserLimit(), currentActiveSeats, sortedSeatNumbers.size()));
+            }
+
+            // 5. Create reservation and transition seat states atomically
+            long totalAmountPaise = show.getPricePaise() * sortedSeatNumbers.size();
+            Reservation reservation = new Reservation(showId, userId, totalAmountPaise, sortedSeatNumbers, idempotencyKey);
+            Reservation savedReservation = reservationRepository.saveAndFlush(reservation);
+
+            for (Seat seat : lockedSeats) {
+                seat.setStatus(SeatStatus.CONFIRMED);
+                seat.setReservationId(savedReservation.getId());
+                seat.setHeldUntil(null);
+            }
+            seatRepository.saveAllAndFlush(lockedSeats);
+
+            ReserveSeatResponse response = new ReserveSeatResponse(
+                    savedReservation.getId(),
+                    showId,
+                    userId,
+                    sortedSeatNumbers,
+                    totalAmountPaise,
+                    savedReservation.getStatus().name().toLowerCase()
+            );
+
+            // 6. Record idempotency entry for future exact-replay lookups
+            try {
+                String serializedResponse = objectMapper.writeValueAsString(response);
+                IdempotencyRecord idempotencyRecord = new IdempotencyRecord(idempotencyKey, userId, payloadHash);
+                idempotencyRecord.setStatus(IdempotencyStatus.COMPLETED);
+                idempotencyRecord.setResponseCode(201);
+                idempotencyRecord.setResponseBody(serializedResponse);
+                idempotencyRecordRepository.save(idempotencyRecord);
+            } catch (JsonProcessingException e) {
+                log.error("Failed to serialize reservation response for idempotency caching", e);
+            } catch (DataIntegrityViolationException e) {
+                log.warn("Idempotency key collision caught during record creation: key='{}'", idempotencyKey);
+            }
+
+            log.info("Reservation CONFIRMED: res_id={} show={} user={} seats={} amount={}",
+                    savedReservation.getId(), showId, userId, sortedSeatNumbers, totalAmountPaise);
+
+            return response;
         }
+    }
 
-        // 5. Create reservation and transition seat states atomically
-        long totalAmountPaise = show.getPricePaise() * sortedSeatNumbers.size();
-        Reservation reservation = new Reservation(showId, userId, totalAmountPaise, sortedSeatNumbers, idempotencyKey);
-        Reservation savedReservation = reservationRepository.save(reservation);
+    private static final Map<String, Object> USER_SHOW_LOCKS = new ConcurrentHashMap<>();
 
-        for (Seat seat : lockedSeats) {
-            seat.setStatus(SeatStatus.CONFIRMED);
-            seat.setReservationId(savedReservation.getId());
-            seat.setHeldUntil(null);
-        }
-        seatRepository.saveAll(lockedSeats);
-
-        ReserveSeatResponse response = new ReserveSeatResponse(
-                savedReservation.getId(),
-                showId,
-                userId,
-                sortedSeatNumbers,
-                totalAmountPaise,
-                savedReservation.getStatus().name().toLowerCase()
-        );
-
-        // 6. Record idempotency entry for future exact-replay lookups
-        try {
-            String serializedResponse = objectMapper.writeValueAsString(response);
-            IdempotencyRecord idempotencyRecord = new IdempotencyRecord(idempotencyKey, userId, payloadHash);
-            idempotencyRecord.setStatus(IdempotencyStatus.COMPLETED);
-            idempotencyRecord.setResponseCode(201);
-            idempotencyRecord.setResponseBody(serializedResponse);
-            idempotencyRecordRepository.save(idempotencyRecord);
-        } catch (JsonProcessingException e) {
-            log.error("Failed to serialize reservation response for idempotency caching", e);
-        } catch (DataIntegrityViolationException e) {
-            log.warn("Idempotency key collision caught during record creation: key='{}'", idempotencyKey);
-        }
-
-        log.info("Reservation CONFIRMED: res_id={} show={} user={} seats={} amount={}",
-                savedReservation.getId(), showId, userId, sortedSeatNumbers, totalAmountPaise);
-
-        return response;
+    private Object getUserLock(String userId, String showId) {
+        return USER_SHOW_LOCKS.computeIfAbsent(userId + ":" + showId, k -> new Object());
     }
 
     /**
@@ -352,6 +361,8 @@ public class BookingService {
                 seatsToRelease
         );
     }
+
+
 
     /**
      * Background scheduled worker to release expired seat holds.
