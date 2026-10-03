@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { SeatDto } from '../services/api';
-import { CheckCircle2, Lock, ShieldCheck, UserCheck, ShieldAlert, Search, XCircle, Hash } from 'lucide-react';
+import { CheckCircle2, Lock, ShieldCheck, UserCheck, Search, XCircle, Hash, Crown } from 'lucide-react';
 
 interface SeatMapProps {
   seats: SeatDto[];
@@ -10,23 +10,27 @@ interface SeatMapProps {
   onToggleSeat: (seatNumber: string) => void;
   disabled?: boolean;
   isAdmin?: boolean;
+  isOwner?: boolean;
+  ownerUserId?: string;
   onCancelReservation?: (reservationId: string) => void;
 }
 
 export const SeatMap: React.FC<SeatMapProps> = ({
   seats,
   selectedSeats,
-  pricePaise,
   perUserLimit,
   onToggleSeat,
   disabled,
   isAdmin = false,
+  isOwner = false,
   onCancelReservation,
 }) => {
   const [hoveredSeat, setHoveredSeat] = useState<SeatDto | null>(null);
   const [inspectorSeat, setInspectorSeat] = useState<SeatDto | null>(null);
   const [rosterSearch, setRosterSearch] = useState<string>('');
   const [showRosterTable, setShowRosterTable] = useState<boolean>(true);
+
+  const isManager = isAdmin || isOwner;
 
   // Group seats by row prefix (e.g. 'A', 'B')
   const rows: { [key: string]: SeatDto[] } = {};
@@ -36,9 +40,7 @@ export const SeatMap: React.FC<SeatMapProps> = ({
     rows[row].push(seat);
   });
 
-  const priceRupees = (pricePaise / 100).toFixed(2);
-
-  // Filtered seats for admin roster
+  // Filtered seats for manager roster
   const filteredRosterSeats = seats.filter((s) => {
     if (!rosterSearch) return true;
     const query = rosterSearch.toLowerCase();
@@ -64,11 +66,15 @@ export const SeatMap: React.FC<SeatMapProps> = ({
           <div className="w-4/5 h-2.5 bg-gradient-to-r from-blue-500 via-purple-500 to-blue-500 rounded-full shadow-[0_0_20px_rgba(59,130,246,0.6)] mb-2" />
           <div className="flex flex-wrap items-center justify-center gap-2">
             <span className="text-xs uppercase tracking-widest text-gray-400 font-semibold">STAGE / SCREEN</span>
-            {isAdmin && (
+            {isAdmin ? (
               <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/30">
                 <ShieldCheck className="w-3 h-3 text-purple-400" /> Admin Inspector Active
               </span>
-            )}
+            ) : isOwner ? (
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                <Crown className="w-3 h-3 text-amber-400" /> Event Manager Mode
+              </span>
+            ) : null}
           </div>
         </div>
 
@@ -91,13 +97,13 @@ export const SeatMap: React.FC<SeatMapProps> = ({
                     } else if (isHeld) {
                       bgClass = 'bg-amber-950/70 border-amber-500/50 text-amber-300 cursor-pointer opacity-90 hover:ring-2 hover:ring-amber-400';
                     } else if (isConfirmed) {
-                      bgClass = isAdmin
+                      bgClass = isManager
                         ? 'bg-purple-950/70 border-purple-500/50 text-purple-300 cursor-pointer hover:scale-105 hover:border-purple-400 ring-1 ring-purple-500/30 shadow-purple-500/20'
                         : 'bg-gray-800/80 border-gray-700 text-gray-500 cursor-not-allowed opacity-60';
                     }
 
                     const handleSeatClick = () => {
-                      if (isAdmin && !isAvailable) {
+                      if (isManager && !isAvailable) {
                         setInspectorSeat(seat);
                       } else if (isAvailable || isSelected) {
                         onToggleSeat(seat.seat_number);
@@ -108,7 +114,7 @@ export const SeatMap: React.FC<SeatMapProps> = ({
                       <div key={seat.seat_number} className="relative group shrink-0">
                         <button
                           id={`seat-btn-${seat.seat_number}`}
-                          disabled={disabled || (!isAvailable && !isSelected && !isAdmin)}
+                          disabled={disabled || (!isAvailable && !isSelected && !isManager)}
                           onClick={handleSeatClick}
                           onMouseEnter={() => setHoveredSeat(seat)}
                           onMouseLeave={() => setHoveredSeat(null)}
@@ -116,7 +122,7 @@ export const SeatMap: React.FC<SeatMapProps> = ({
                         >
                           <span>{seat.seat_number}</span>
                           {isConfirmed && (
-                            isAdmin ? (
+                            isManager ? (
                               <UserCheck className="w-2.5 h-2.5 mt-0.5 text-purple-300" />
                             ) : (
                               <Lock className="w-2.5 h-2.5 mt-0.5 text-gray-400" />
@@ -125,8 +131,8 @@ export const SeatMap: React.FC<SeatMapProps> = ({
                           {isSelected && <CheckCircle2 className="w-2.5 h-2.5 mt-0.5 text-white" />}
                         </button>
 
-                        {/* Tooltip for Admin & Users */}
-                        {isAdmin && seat.booked_by && (
+                        {/* Tooltip for Manager & Admin */}
+                        {isManager && seat.booked_by && (
                           <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center z-50 pointer-events-none min-w-[140px] max-w-[200px]">
                             <div className="bg-gray-900 border border-purple-500/40 text-[11px] rounded-lg p-2 shadow-2xl text-center space-y-0.5 w-full">
                               <div className="font-bold text-white flex items-center justify-center gap-1">
@@ -173,174 +179,168 @@ export const SeatMap: React.FC<SeatMapProps> = ({
             <span>Held</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className={`w-3.5 h-3.5 rounded-md ${isAdmin ? 'bg-purple-950/80 border border-purple-500/60' : 'bg-gray-800/80 border border-gray-700'}`} />
-            <span>{isAdmin ? 'Confirmed (Admin Visible)' : 'Confirmed (Sold)'}</span>
+            <div className={`w-3.5 h-3.5 rounded-md ${isManager ? 'bg-purple-950/80 border border-purple-500/60' : 'bg-gray-800/80 border border-gray-700'}`} />
+            <span>{isManager ? 'Confirmed (Manager Visible)' : 'Confirmed (Sold)'}</span>
           </div>
           <div className="flex items-center gap-1 text-gray-400">
             <ShieldCheck className="w-4 h-4 text-purple-400" />
-            <span>Limit: {perUserLimit} seats/user</span>
+            <span>Max {perUserLimit} seats/user</span>
           </div>
         </div>
       </div>
 
-      {/* Admin Quick Inspector Card */}
-      {isAdmin && activeOccupiedSeat && (
-        <div className="glass-panel p-4 rounded-xl border border-purple-500/40 bg-purple-950/20 flex flex-wrap items-center justify-between gap-4 animate-fadeIn">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-lg bg-purple-600/20 border border-purple-500/40 flex items-center justify-center text-purple-300 font-extrabold text-base shrink-0">
+      {/* Manager Seat Inspection Popup / Card */}
+      {isManager && activeOccupiedSeat && activeOccupiedSeat.status !== 'available' && (
+        <div className="glass-panel p-4 rounded-2xl border border-purple-500/30 bg-purple-950/20 shadow-xl flex flex-wrap items-center justify-between gap-4 animate-in fade-in duration-200">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300 font-bold">
               {activeOccupiedSeat.seat_number}
             </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs font-bold text-white">Seat {activeOccupiedSeat.seat_number} Audit Details</span>
-                <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${activeOccupiedSeat.status === 'confirmed' ? 'bg-purple-500/20 text-purple-300' : 'bg-emerald-500/20 text-emerald-300'}`}>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-purple-300">
+                  Seat {activeOccupiedSeat.seat_number} Details
+                </span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 uppercase font-semibold">
                   {activeOccupiedSeat.status}
                 </span>
               </div>
-              <div className="text-xs text-gray-300 flex flex-wrap items-center gap-3 pt-0.5">
-                {activeOccupiedSeat.booked_by ? (
-                  <span className="flex items-center gap-1 text-purple-200">
-                    <UserCheck className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                    Booked By: <strong className="font-mono">{activeOccupiedSeat.booked_by}</strong>
-                  </span>
-                ) : (
-                  <span className="text-gray-400">Not reserved yet</span>
-                )}
-                {activeOccupiedSeat.reservation_id && (
-                  <span className="text-gray-400 font-mono text-[11px] flex items-center gap-1 truncate max-w-xs" title={activeOccupiedSeat.reservation_id}>
-                    <Hash className="w-3 h-3 text-gray-500 shrink-0" />
-                    <span className="truncate">Res ID: {activeOccupiedSeat.reservation_id}</span>
-                  </span>
-                )}
+              <div className="text-sm font-semibold text-white flex items-center gap-1.5 mt-0.5">
+                <UserCheck className="w-4 h-4 text-purple-400" />
+                Booked by: <span className="text-purple-300 font-mono">{activeOccupiedSeat.booked_by || 'Unknown'}</span>
               </div>
+              {activeOccupiedSeat.reservation_id && (
+                <div className="text-xs text-gray-400 font-mono mt-0.5 flex items-center gap-1">
+                  <Hash className="w-3 h-3 text-gray-500" />
+                  Reservation: {activeOccupiedSeat.reservation_id}
+                </div>
+              )}
             </div>
           </div>
 
-          {activeOccupiedSeat.reservation_id && onCancelReservation && (
-            <button
-              onClick={() => onCancelReservation(activeOccupiedSeat.reservation_id!)}
-              className="py-1.5 px-3 rounded-lg bg-red-600/80 hover:bg-red-500 text-white text-xs font-bold transition-all flex items-center gap-1 shadow-md cursor-pointer shrink-0"
-            >
-              <XCircle className="w-3.5 h-3.5" />
-              Revoke Reservation
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {onCancelReservation && activeOccupiedSeat.reservation_id && (
+              <button
+                onClick={() => onCancelReservation(activeOccupiedSeat.reservation_id!)}
+                className="px-3 py-1.5 rounded-lg bg-red-600/80 hover:bg-red-600 text-white text-xs font-bold flex items-center gap-1.5 shadow transition cursor-pointer"
+              >
+                <XCircle className="w-3.5 h-3.5" />
+                Cancel Reservation
+              </button>
+            )}
+            {inspectorSeat && (
+              <button
+                onClick={() => setInspectorSeat(null)}
+                className="px-2.5 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold cursor-pointer"
+              >
+                Close
+              </button>
+            )}
+          </div>
         </div>
       )}
 
-      {/* Admin Seat & Customer Roster Table */}
-      {isAdmin && (
-        <div className="glass-panel p-4 sm:p-6 rounded-2xl space-y-4 border border-purple-500/20 overflow-hidden w-full">
-          <div className="flex flex-wrap items-center justify-between gap-4">
+      {/* Manager Full Seat Audit Roster Table */}
+      {isManager && (
+        <div className="glass-panel p-4 sm:p-6 rounded-2xl shadow-xl space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-800 pb-3">
             <div className="flex items-center gap-2">
-              <ShieldAlert className="w-5 h-5 text-purple-400 shrink-0" />
-              <h3 className="text-base font-bold text-white">Admin Seat & Customer Audit Roster</h3>
-              <span className="text-xs text-gray-400 font-mono">({seats.length} total)</span>
+              <ShieldCheck className="w-5 h-5 text-purple-400" />
+              <h4 className="font-bold text-white text-sm sm:text-base">
+                {isAdmin ? 'Administrator' : 'Event Manager'} Customer Seat Roster
+              </h4>
+              <span className="text-xs text-purple-400 font-mono bg-purple-500/10 px-2 py-0.5 rounded-md border border-purple-500/20">
+                {seats.filter((s) => s.status !== 'available').length} / {seats.length} Occupied
+              </span>
             </div>
 
-            <div className="flex items-center gap-3 flex-wrap">
-              {/* Search input */}
+            <div className="flex items-center gap-2">
               <div className="relative">
-                <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
                 <input
                   type="text"
-                  placeholder="Filter seat, user, or status..."
+                  placeholder="Filter by seat, user, or ID..."
                   value={rosterSearch}
                   onChange={(e) => setRosterSearch(e.target.value)}
-                  className="bg-gray-900 border border-gray-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 w-44 sm:w-56"
+                  className="pl-8 pr-3 py-1 bg-gray-900 border border-gray-700 rounded-lg text-xs text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 w-48 sm:w-64"
                 />
               </div>
-
               <button
                 onClick={() => setShowRosterTable(!showRosterTable)}
-                className="text-xs text-purple-400 hover:text-purple-300 font-semibold cursor-pointer shrink-0"
+                className="px-2.5 py-1 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold cursor-pointer"
               >
-                {showRosterTable ? 'Hide Table' : 'Show Table'}
+                {showRosterTable ? 'Hide' : 'Show'}
               </button>
             </div>
           </div>
 
           {showRosterTable && (
-            <div className="overflow-x-auto rounded-xl border border-gray-800 w-full scrollbar-thin">
-              <table className="w-full text-left text-xs text-gray-300 min-w-[580px]">
-                <thead className="bg-gray-900/90 text-gray-400 uppercase font-semibold text-[10px] border-b border-gray-800">
-                  <tr>
-                    <th className="px-3 sm:px-4 py-3">Seat #</th>
-                    <th className="px-3 sm:px-4 py-3">Status</th>
-                    <th className="px-3 sm:px-4 py-3">Booked By (Customer)</th>
-                    <th className="px-3 sm:px-4 py-3">Reservation Ref</th>
-                    <th className="px-3 sm:px-4 py-3">Price</th>
-                    <th className="px-3 sm:px-4 py-3 text-right">Action</th>
+            <div className="w-full overflow-x-auto max-h-64 scrollbar-thin">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-gray-800 text-gray-400 uppercase tracking-wider font-semibold">
+                    <th className="py-2 px-3">Seat</th>
+                    <th className="py-2 px-3">Status</th>
+                    <th className="py-2 px-3">Customer User ID</th>
+                    <th className="py-2 px-3">Reservation ID</th>
+                    <th className="py-2 px-3 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-800/60 bg-gray-950/40">
-                  {filteredRosterSeats.length > 0 ? (
-                    filteredRosterSeats.map((seat) => {
-                      const isOccupied = seat.status !== 'available';
+                <tbody className="divide-y divide-gray-800/50">
+                  {filteredRosterSeats.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="py-4 text-center text-gray-500">
+                        No matching seats found
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredRosterSeats.map((s) => {
+                      const isAvail = s.status === 'available';
                       return (
-                        <tr
-                          key={seat.seat_number}
-                          className="hover:bg-gray-900/50 transition-colors cursor-pointer"
-                          onClick={() => setInspectorSeat(seat)}
-                        >
-                          <td className="px-3 sm:px-4 py-3 font-bold text-white font-mono">{seat.seat_number}</td>
-                          <td className="px-3 sm:px-4 py-3">
+                        <tr key={s.seat_number} className="hover:bg-gray-800/30 transition">
+                          <td className="py-2 px-3 font-bold text-white">{s.seat_number}</td>
+                          <td className="py-2 px-3">
                             <span
-                              className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold inline-block ${
-                                seat.status === 'confirmed'
-                                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
-                                  : seat.status === 'held'
-                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                                  : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                isAvail
+                                  ? 'bg-emerald-500/20 text-emerald-400'
+                                  : s.status === 'held'
+                                  ? 'bg-amber-500/20 text-amber-400'
+                                  : 'bg-purple-500/20 text-purple-300'
                               }`}
                             >
-                              {seat.status}
+                              {s.status}
                             </span>
                           </td>
-                          <td className="px-3 sm:px-4 py-3">
-                            {seat.booked_by ? (
-                              <div className="flex items-center gap-1.5 font-bold text-purple-200">
-                                <UserCheck className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                                <span className="font-mono truncate max-w-[120px]">{seat.booked_by}</span>
-                              </div>
+                          <td className="py-2 px-3">
+                            {s.booked_by ? (
+                              <span className="font-mono text-purple-300 font-semibold">{s.booked_by}</span>
                             ) : (
-                              <span className="text-gray-500 italic">— Available —</span>
+                              <span className="text-gray-600">—</span>
                             )}
                           </td>
-                          <td className="px-3 sm:px-4 py-3 font-mono text-[11px] text-gray-400">
-                            {seat.reservation_id ? (
-                              <span className="truncate max-w-[110px] sm:max-w-[140px] block" title={seat.reservation_id}>
-                                {seat.reservation_id.slice(0, 8)}...
-                              </span>
+                          <td className="py-2 px-3 font-mono text-gray-400">
+                            {s.reservation_id ? (
+                              <span title={s.reservation_id}>{s.reservation_id.slice(0, 12)}...</span>
                             ) : (
-                              '—'
+                              <span className="text-gray-600">—</span>
                             )}
                           </td>
-                          <td className="px-3 sm:px-4 py-3 font-mono text-emerald-400">₹{priceRupees}</td>
-                          <td className="px-3 sm:px-4 py-3 text-right">
-                            {isOccupied && seat.reservation_id && onCancelReservation ? (
+                          <td className="py-2 px-3 text-right">
+                            {onCancelReservation && s.reservation_id ? (
                               <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onCancelReservation(seat.reservation_id!);
-                                }}
-                                className="px-2.5 py-1 rounded bg-red-600/20 hover:bg-red-600 text-red-300 hover:text-white text-[10px] font-bold border border-red-500/30 transition-all cursor-pointer"
+                                onClick={() => onCancelReservation(s.reservation_id!)}
+                                className="px-2 py-0.5 rounded bg-red-600/30 hover:bg-red-600/60 text-red-300 text-[11px] font-semibold border border-red-500/30 transition cursor-pointer"
                               >
-                                Revoke
+                                Cancel
                               </button>
                             ) : (
-                              <span className="text-gray-600 text-[10px]">—</span>
+                              <span className="text-gray-600">—</span>
                             )}
                           </td>
                         </tr>
                       );
                     })
-                  ) : (
-                    <tr>
-                      <td colSpan={6} className="px-4 py-6 text-center text-gray-500">
-                        No seats match the filter "{rosterSearch}"
-                      </td>
-                    </tr>
                   )}
                 </tbody>
               </table>

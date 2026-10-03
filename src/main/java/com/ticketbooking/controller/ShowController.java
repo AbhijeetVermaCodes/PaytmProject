@@ -1,6 +1,7 @@
 package com.ticketbooking.controller;
 
 import com.ticketbooking.dto.*;
+import com.ticketbooking.exception.ForbiddenException;
 import com.ticketbooking.exception.UnauthorizedException;
 import com.ticketbooking.security.UserContext;
 import com.ticketbooking.service.BookingService;
@@ -9,6 +10,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/shows")
@@ -21,12 +24,15 @@ public class ShowController {
     }
 
     /**
-     * 1. Create a show — POST /shows (admin)
+     * 1. Create a show — POST /shows (Admin only)
+     * Regular users must submit an event proposal via POST /event-requests
      */
     @PostMapping
     public ResponseEntity<ShowResponse> createShow(@Valid @RequestBody CreateShowRequest request) {
-        // Admin or authenticated check (optional authorization toggle)
-        ShowResponse response = bookingService.createShow(request);
+        if (!UserContext.isAdmin()) {
+            throw new ForbiddenException("Regular users cannot create events directly. Please submit an event proposal via POST /event-requests");
+        }
+        ShowResponse response = bookingService.createShow(request, UserContext.getCurrentUser());
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
@@ -34,8 +40,8 @@ public class ShowController {
      * List all shows — GET /shows
      */
     @GetMapping
-    public ResponseEntity<java.util.List<ShowResponse>> getAllShows() {
-        java.util.List<ShowResponse> responses = bookingService.getAllShows();
+    public ResponseEntity<List<ShowResponse>> getAllShows() {
+        List<ShowResponse> responses = bookingService.getAllShows();
         return ResponseEntity.ok(responses);
     }
 

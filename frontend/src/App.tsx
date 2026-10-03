@@ -5,7 +5,9 @@ import {
   RefreshCw,
   Clock,
   Layers,
-  ShieldCheck
+  ShieldCheck,
+  Crown,
+  FileText
 } from 'lucide-react';
 import {
   fetchShows,
@@ -19,6 +21,7 @@ import { SeatMap } from './components/SeatMap';
 import { ContentionSimulator } from './components/ContentionSimulator';
 import { ObservabilityHUD } from './components/ObservabilityHUD';
 import { ShowCreator } from './components/ShowCreator';
+import { EventProposalsManager } from './components/EventProposalsManager';
 import { showAlert } from './utils/alert';
 
 const STORAGE_KEY_SHOW_ID = 'seatrush_current_show_id';
@@ -38,9 +41,10 @@ export function App() {
   const [isBooking, setIsBooking] = useState<boolean>(false);
   const [lastReservationId, setLastReservationId] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState<'simulator' | 'observability' | 'create'>('simulator');
+  const [activeTab, setActiveTab] = useState<'simulator' | 'observability' | 'create' | 'proposals'>('simulator');
 
   const isAdmin = userToken.toLowerCase().startsWith('admin');
+  const isOwner = Boolean(show?.owner_user_id && show.owner_user_id === userToken);
 
   const addLog = (msg: string) => {
     setLogs((prev) => [msg, ...prev.slice(0, 50)]);
@@ -61,6 +65,7 @@ export function App() {
     localStorage.setItem(STORAGE_KEY_SHOW_ID, showId);
     setSelectedSeats([]);
     showAlert.toast(`Event switched`, 'info');
+    loadShow(showId, userToken);
   };
 
   // Fetch show details
@@ -93,6 +98,7 @@ export function App() {
         if (targetId !== currentShowId) {
           setCurrentShowId(targetId);
           localStorage.setItem(STORAGE_KEY_SHOW_ID, targetId);
+          loadShow(targetId, token || userToken);
         }
       } else {
         // Auto-seed initial show if none exist
@@ -102,12 +108,15 @@ export function App() {
             seats.push(`${row}${i}`);
           }
         });
-        const created = await createShow({
-          name: 'Coldplay: Music of the Spheres World Tour 2026',
-          seats,
-          price_paise: 250000,
-          per_user_limit: 4,
-        });
+        const created = await createShow(
+          {
+            name: 'Coldplay: Music of the Spheres World Tour 2026',
+            seats,
+            price_paise: 250000,
+            per_user_limit: 4,
+          },
+          'admin'
+        );
         setAvailableShows([created]);
         setCurrentShowId(created.id);
         localStorage.setItem(STORAGE_KEY_SHOW_ID, created.id);
@@ -221,17 +230,18 @@ export function App() {
   };
 
   const handleCancelSpecificReservation = async (reservationId: string) => {
+    const actorLabel = isAdmin ? 'Admin' : 'Event Manager';
     const confirmed = await showAlert.confirm(
-      'Admin Revoke Reservation?',
-      `Are you sure you want to revoke reservation ${reservationId.slice(0, 8)}... and return seats to inventory?`,
-      'Yes, Revoke Reservation'
+      `${actorLabel} Revoke Reservation?`,
+      `Are you sure you want to cancel reservation ${reservationId.slice(0, 8)}... and return seats to inventory?`,
+      'Yes, Cancel Reservation'
     );
     if (!confirmed) return;
 
     try {
       const res = await cancelReservation(reservationId, userToken);
-      addLog(`ADMIN OVERRIDE: '${userToken}' cancelled reservation ${res.reservation_id.slice(0, 8)}... (Freed seats: ${res.freed_seats.join(', ')})`);
-      showAlert.toast(`Admin revoked reservation (Freed: ${res.freed_seats.join(', ')})`, 'success');
+      addLog(`${actorLabel.toUpperCase()} OVERRIDE: '${userToken}' cancelled reservation ${res.reservation_id.slice(0, 8)}... (Freed seats: ${res.freed_seats.join(', ')})`);
+      showAlert.toast(`${actorLabel} cancelled reservation (Freed: ${res.freed_seats.join(', ')})`, 'success');
       if (lastReservationId === reservationId) {
         setLastReservationId(null);
       }
@@ -239,7 +249,7 @@ export function App() {
       refreshShowList();
     } catch (err: any) {
       addLog(`CANCEL FAILED: ${err.message}`);
-      showAlert.error('Revocation Failed', err.message);
+      showAlert.error('Cancellation Failed', err.message);
     }
   };
 
@@ -260,11 +270,15 @@ export function App() {
                 <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
                   High-Concurrency
                 </span>
-                {isAdmin && (
+                {isAdmin ? (
                   <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-1 font-bold">
                     <ShieldCheck className="w-3 h-3" /> Admin Mode
                   </span>
-                )}
+                ) : isOwner ? (
+                  <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1 font-bold">
+                    <Crown className="w-3 h-3 text-amber-400" /> Event Manager
+                  </span>
+                ) : null}
               </div>
               <p className="text-[10px] sm:text-[11px] text-gray-400">Race-Free Distributed Ticket Booking Engine</p>
             </div>
@@ -303,6 +317,7 @@ export function App() {
                 <option value="user-alice" className="bg-gray-900">user-alice (Regular)</option>
                 <option value="user-bob" className="bg-gray-900">user-bob (Regular)</option>
                 <option value="user-charlie" className="bg-gray-900">user-charlie (Regular)</option>
+                <option value="organizer-jane" className="bg-gray-900">organizer-jane (Regular/Creator)</option>
                 <option value="admin" className="bg-gray-900 font-bold text-purple-400">admin (Admin Role)</option>
               </select>
             </div>
@@ -328,7 +343,16 @@ export function App() {
         {show && (
           <div className="glass-panel p-4 sm:p-6 rounded-2xl flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 w-full overflow-hidden">
             <div className="min-w-0">
-              <span className="text-[10px] sm:text-xs font-bold text-purple-400 uppercase tracking-widest block">Active On-Sale Event</span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] sm:text-xs font-bold text-purple-400 uppercase tracking-widest block">
+                  Active On-Sale Event
+                </span>
+                {show.owner_user_id && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20 font-mono">
+                    Owner: {show.owner_user_id}
+                  </span>
+                )}
+              </div>
               <h2 className="text-xl sm:text-2xl font-black text-white truncate max-w-full" title={show.name}>
                 {show.name}
               </h2>
@@ -370,6 +394,8 @@ export function App() {
                 onToggleSeat={handleToggleSeat}
                 disabled={isBooking}
                 isAdmin={isAdmin}
+                isOwner={isOwner}
+                ownerUserId={show.owner_user_id}
                 onCancelReservation={handleCancelSpecificReservation}
               />
             ) : (
@@ -439,7 +465,7 @@ export function App() {
           {/* Right Column: Tabbed Control Center */}
           <div className="lg:col-span-5 space-y-6 min-w-0 max-w-full overflow-hidden">
             {/* Tab Header */}
-            <div className="flex items-center bg-gray-900/90 p-1.5 rounded-xl border border-gray-800 w-full overflow-x-auto">
+            <div className="flex items-center bg-gray-900/90 p-1.5 rounded-xl border border-gray-800 w-full overflow-x-auto gap-1">
               <button
                 onClick={() => setActiveTab('simulator')}
                 className={`flex-1 py-2 px-2 text-center text-xs font-bold rounded-lg transition-all cursor-pointer truncate ${
@@ -462,7 +488,16 @@ export function App() {
                   activeTab === 'create' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:text-white'
                 }`}
               >
-                Create Event
+                {isAdmin ? 'Create Event' : 'Propose Event'}
+              </button>
+              <button
+                onClick={() => setActiveTab('proposals')}
+                className={`flex-1 py-2 px-2 text-center text-xs font-bold rounded-lg transition-all cursor-pointer truncate flex items-center justify-center gap-1 ${
+                  activeTab === 'proposals' ? 'bg-purple-600 text-white shadow-md' : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                <FileText className="w-3 h-3 shrink-0" />
+                {isAdmin ? 'Approvals' : 'My Requests'}
               </button>
             </div>
 
@@ -471,6 +506,8 @@ export function App() {
             {activeTab === 'observability' && <ObservabilityHUD show={show} logs={logs} />}
             {activeTab === 'create' && (
               <ShowCreator
+                userToken={userToken}
+                isAdmin={isAdmin}
                 onShowCreated={(created) => {
                   setShow(created);
                   setCurrentShowId(created.id);
@@ -478,6 +515,23 @@ export function App() {
                   setAvailableShows((prev) => [created, ...prev.filter((s) => s.id !== created.id)]);
                   setActiveTab('simulator');
                   addLog(`Show created: '${created.name}' with ${created.total_seats} seats`);
+                }}
+                onProposalSubmitted={() => {
+                  setActiveTab('proposals');
+                  addLog(`Event proposal submitted for admin review`);
+                }}
+              />
+            )}
+            {activeTab === 'proposals' && (
+              <EventProposalsManager
+                userToken={userToken}
+                isAdmin={isAdmin}
+                onShowSelect={(showId) => {
+                  handleSelectShow(showId);
+                  setActiveTab('simulator');
+                }}
+                onShowApproved={() => {
+                  refreshShowList();
                 }}
               />
             )}
@@ -487,7 +541,7 @@ export function App() {
 
       {/* Footer */}
       <footer className="border-t border-gray-800/60 py-4 text-center text-xs text-gray-500 font-mono w-full px-4">
-        SeatRush Engine v1.0.0 • Java 17 + Spring Boot 3 + PostgreSQL • Race-Free ACID Decision Engine
+        SeatRush Engine v1.0.0 • Java 25 + Spring Boot 3.3.4 + PostgreSQL/H2 • Race-Free ACID Decision Engine
       </footer>
     </div>
   );

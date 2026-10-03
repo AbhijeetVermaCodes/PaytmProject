@@ -15,6 +15,7 @@ export interface ShowResponse {
   held_seats: number;
   confirmed_seats: number;
   reconciliation_valid: boolean;
+  owner_user_id?: string;
   seats: SeatDto[];
 }
 
@@ -33,6 +34,21 @@ export interface CancelReservationResponse {
   user_id: string;
   status: string;
   freed_seats: string[];
+}
+
+export interface EventProposal {
+  id: string;
+  name: string;
+  seats: string[];
+  price_paise: number;
+  per_user_limit: number;
+  requested_by: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  reviewed_by?: string;
+  show_id?: string;
+  rejection_reason?: string;
+  created_at: string;
+  reviewed_at?: string;
 }
 
 export interface ReadinessResponse {
@@ -69,23 +85,104 @@ export async function fetchShowState(showId: string, userToken?: string): Promis
   return res.json();
 }
 
-export async function createShow(payload: {
-  name: string;
-  seats: string[];
-  price_paise: number;
-  per_user_limit?: number;
-}): Promise<ShowResponse> {
+export async function createShow(
+  payload: {
+    name: string;
+    seats: string[];
+    price_paise: number;
+    per_user_limit?: number;
+  },
+  userToken: string = 'admin'
+): Promise<ShowResponse> {
   const res = await fetch(`${BASE_URL}/shows`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': 'Bearer admin',
+      'Authorization': `Bearer ${userToken}`,
     },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.message || `Failed to create show: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function submitEventProposal(
+  payload: {
+    name: string;
+    seats: string[];
+    price_paise: number;
+    per_user_limit?: number;
+  },
+  userToken: string
+): Promise<EventProposal> {
+  const res = await fetch(`${BASE_URL}/event-requests`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${userToken}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `Failed to submit event proposal: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchEventProposals(
+  userToken: string,
+  status?: 'PENDING' | 'APPROVED' | 'REJECTED'
+): Promise<EventProposal[]> {
+  const url = status ? `${BASE_URL}/event-requests?status=${status}` : `${BASE_URL}/event-requests`;
+  const res = await fetch(url, {
+    headers: {
+      'Authorization': `Bearer ${userToken}`,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `Failed to fetch event proposals: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function approveEventProposal(
+  proposalId: string,
+  userToken: string
+): Promise<EventProposal> {
+  const res = await fetch(`${BASE_URL}/event-requests/${proposalId}/approve`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${userToken}`,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `Failed to approve event proposal: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function rejectEventProposal(
+  proposalId: string,
+  reason: string | undefined,
+  userToken: string
+): Promise<EventProposal> {
+  const res = await fetch(`${BASE_URL}/event-requests/${proposalId}/reject`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${userToken}`,
+    },
+    body: JSON.stringify({ reason }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `Failed to reject event proposal: ${res.status}`);
   }
   return res.json();
 }

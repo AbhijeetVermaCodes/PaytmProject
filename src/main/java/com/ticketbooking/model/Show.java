@@ -26,6 +26,9 @@ public class Show {
     @Column(name = "total_seats", nullable = false)
     private int totalSeats;
 
+    @Column(name = "owner_user_id", length = 100)
+    private String ownerUserId;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -39,10 +42,15 @@ public class Show {
     }
 
     public Show(String name, long pricePaise, int perUserLimit) {
+        this(name, pricePaise, perUserLimit, null);
+    }
+
+    public Show(String name, long pricePaise, int perUserLimit, String ownerUserId) {
         this.id = UUID.randomUUID().toString();
         this.name = name;
         this.pricePaise = pricePaise;
         this.perUserLimit = perUserLimit > 0 ? perUserLimit : 4;
+        this.ownerUserId = ownerUserId;
         this.createdAt = Instant.now();
         this.updatedAt = Instant.now();
     }
@@ -103,6 +111,14 @@ public class Show {
 
     public void setTotalSeats(int totalSeats) {
         this.totalSeats = totalSeats;
+    }
+
+    public String getOwnerUserId() {
+        return ownerUserId;
+    }
+
+    public void setOwnerUserId(String ownerUserId) {
+        this.ownerUserId = ownerUserId;
     }
 
     public Instant getCreatedAt() {

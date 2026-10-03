@@ -32,6 +32,9 @@ public class ShowResponse {
     @JsonProperty("reconciliation_valid")
     private boolean reconciliationValid;
 
+    @JsonProperty("owner_user_id")
+    private String ownerUserId;
+
     @JsonProperty("seats")
     private List<SeatDto> seats;
 
@@ -39,7 +42,7 @@ public class ShowResponse {
     }
 
     public ShowResponse(String id, String name, long pricePaise, int perUserLimit, int totalSeats,
-                        long availableSeats, long heldSeats, long confirmedSeats, List<SeatDto> seats) {
+                        long availableSeats, long heldSeats, long confirmedSeats, String ownerUserId, List<SeatDto> seats) {
         this.id = id;
         this.name = name;
         this.pricePaise = pricePaise;
@@ -49,7 +52,13 @@ public class ShowResponse {
         this.heldSeats = heldSeats;
         this.confirmedSeats = confirmedSeats;
         this.reconciliationValid = (availableSeats + heldSeats + confirmedSeats) == totalSeats;
+        this.ownerUserId = ownerUserId;
         this.seats = seats;
+    }
+
+    public ShowResponse(String id, String name, long pricePaise, int perUserLimit, int totalSeats,
+                        long availableSeats, long heldSeats, long confirmedSeats, List<SeatDto> seats) {
+        this(id, name, pricePaise, perUserLimit, totalSeats, availableSeats, heldSeats, confirmedSeats, null, seats);
     }
 
     public String getId() {
@@ -122,6 +131,14 @@ public class ShowResponse {
 
     public void setReconciliationValid(boolean reconciliationValid) {
         this.reconciliationValid = reconciliationValid;
+    }
+
+    public String getOwnerUserId() {
+        return ownerUserId;
+    }
+
+    public void setOwnerUserId(String ownerUserId) {
+        this.ownerUserId = ownerUserId;
     }
 
     public List<SeatDto> getSeats() {

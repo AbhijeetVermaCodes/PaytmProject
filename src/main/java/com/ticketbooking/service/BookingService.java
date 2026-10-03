@@ -8,6 +8,7 @@ import com.ticketbooking.exception.DomainConflictException;
 import com.ticketbooking.exception.ForbiddenException;
 import com.ticketbooking.exception.ResourceNotFoundException;
 import com.ticketbooking.model.*;
+import com.ticketbooking.repository.EventRequestRepository;
 import com.ticketbooking.repository.IdempotencyRecordRepository;
 import com.ticketbooking.repository.ReservationRepository;
 import com.ticketbooking.repository.SeatRepository;
@@ -42,6 +43,7 @@ public class BookingService {
     private final SeatRepository seatRepository;
     private final ReservationRepository reservationRepository;
     private final IdempotencyRecordRepository idempotencyRecordRepository;
+    private final EventRequestRepository eventRequestRepository;
     private final MetricsService metricsService;
     private final ObjectMapper objectMapper;
 
@@ -55,21 +57,31 @@ public class BookingService {
                           SeatRepository seatRepository,
                           ReservationRepository reservationRepository,
                           IdempotencyRecordRepository idempotencyRecordRepository,
+                          EventRequestRepository eventRequestRepository,
                           MetricsService metricsService,
                           ObjectMapper objectMapper) {
         this.showRepository = showRepository;
         this.seatRepository = seatRepository;
         this.reservationRepository = reservationRepository;
         this.idempotencyRecordRepository = idempotencyRecordRepository;
+        this.eventRequestRepository = eventRequestRepository;
         this.metricsService = metricsService;
         this.objectMapper = objectMapper;
     }
 
     /**
-     * Creates a new show with assigned available seats.
+     * Creates a new show directly.
      */
     @Transactional
     public ShowResponse createShow(CreateShowRequest request) {
+        return createShow(request, null);
+    }
+
+    /**
+     * Creates a new show with assigned available seats and specified owner/manager.
+     */
+    @Transactional
+    public ShowResponse createShow(CreateShowRequest request, String ownerUserId) {
         if (!StringUtils.hasText(request.getName())) {
             throw new BadRequestException("Show name cannot be blank");
         }
@@ -94,7 +106,7 @@ public class BookingService {
                 ? request.getPerUserLimit()
                 : defaultPerUserLimit;
 
-        Show show = new Show(request.getName().trim(), request.getPricePaise(), limit);
+        Show show = new Show(request.getName().trim(), request.getPricePaise(), limit, ownerUserId);
         show.setTotalSeats(rawSeats.size());
         Show savedShow = showRepository.save(show);
 
@@ -104,14 +116,183 @@ public class BookingService {
         }
         seatRepository.saveAll(seatsToSave);
 
-        log.info("Created show id={} name='{}' total_seats={} per_user_limit={} price_paise={}",
-                savedShow.getId(), savedShow.getName(), savedShow.getTotalSeats(), limit, savedShow.getPricePaise());
+        log.info("Created show id={} name='{}' total_seats={} per_user_limit={} price_paise={} owner='{}'",
+                savedShow.getId(), savedShow.getName(), savedShow.getTotalSeats(), limit, savedShow.getPricePaise(), ownerUserId);
 
         return getShowState(savedShow.getId());
     }
 
     /**
+     * Submits an event creation request/proposal (starts in PENDING state).
+     */
+    @Transactional
+    public EventProposalResponse submitEventProposal(SubmitEventProposalRequest request, String requestedBy) {
+        if (!StringUtils.hasText(requestedBy)) {
+            throw new BadRequestException("Authentication required to submit an event proposal");
+        }
+        if (!StringUtils.hasText(request.getName())) {
+            throw new BadRequestException("Event name cannot be blank");
+        }
+        if (request.getSeats() == null || request.getSeats().isEmpty()) {
+            throw new BadRequestException("Seats list cannot be empty");
+        }
+        if (request.getPricePaise() <= 0) {
+            throw new BadRequestException("Price in paise must be strictly positive");
+        }
+
+        List<String> rawSeats = request.getSeats().stream()
+                .filter(StringUtils::hasText)
+                .map(String::trim)
+                .collect(Collectors.toList());
+
+        Set<String> uniqueSeats = new HashSet<>(rawSeats);
+        if (uniqueSeats.size() != rawSeats.size()) {
+            throw new BadRequestException("Duplicate seat numbers detected in event proposal");
+        }
+
+        int limit = request.getPerUserLimit() != null && request.getPerUserLimit() > 0
+                ? request.getPerUserLimit()
+                : defaultPerUserLimit;
+
+        EventRequest eventRequest = new EventRequest(
+                request.getName().trim(),
+                rawSeats,
+                request.getPricePaise(),
+                limit,
+                requestedBy
+        );
+
+        EventRequest saved = eventRequestRepository.save(eventRequest);
+        log.info("Event proposal submitted id={} name='{}' requestedBy='{}' seats={}",
+                saved.getId(), saved.getName(), requestedBy, rawSeats.size());
+
+        return toEventProposalResponse(saved);
+    }
+
+    /**
+     * Lists event proposals. Admins can see all, regular users see their own.
+     */
+    @Transactional(readOnly = true)
+    public List<EventProposalResponse> getEventProposals(String currentUser, boolean isAdmin, EventRequestStatus status) {
+        List<EventRequest> list;
+        if (isAdmin) {
+            if (status != null) {
+                list = eventRequestRepository.findByStatusOrderByCreatedAtDesc(status);
+            } else {
+                list = eventRequestRepository.findAllByOrderByCreatedAtDesc();
+            }
+        } else {
+            if (!StringUtils.hasText(currentUser)) {
+                return Collections.emptyList();
+            }
+            list = eventRequestRepository.findByRequestedByOrderByCreatedAtDesc(currentUser);
+            if (status != null) {
+                list = list.stream().filter(e -> e.getStatus() == status).collect(Collectors.toList());
+            }
+        }
+        return list.stream().map(this::toEventProposalResponse).collect(Collectors.toList());
+    }
+
+    /**
+     * Gets a single event proposal.
+     */
+    @Transactional(readOnly = true)
+    public EventProposalResponse getEventProposalById(String id, String currentUser, boolean isAdmin) {
+        EventRequest eventRequest = eventRequestRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Event proposal not found with id: " + id));
+
+        if (!isAdmin && (currentUser == null || !currentUser.equals(eventRequest.getRequestedBy()))) {
+            throw new ForbiddenException("Cannot view an event proposal submitted by another user");
+        }
+
+        return toEventProposalResponse(eventRequest);
+    }
+
+    /**
+     * Approves an event proposal and creates the live show with the requester as the owner.
+     */
+    @Transactional
+    public EventProposalResponse approveEventProposal(String proposalId, String adminUserId) {
+        if (!UserContext.isAdmin()) {
+            throw new ForbiddenException("Only administrators can approve event proposals");
+        }
+
+        EventRequest proposal = eventRequestRepository.findById(proposalId)
+                .orElseThrow(() -> new ResourceNotFoundException("Event proposal not found with id: " + proposalId));
+
+        if (proposal.getStatus() != EventRequestStatus.PENDING) {
+            throw new BadRequestException("Event proposal is already " + proposal.getStatus());
+        }
+
+        // Create the show with the requester set as the owner
+        CreateShowRequest showRequest = new CreateShowRequest(
+                proposal.getName(),
+                proposal.getSeats(),
+                proposal.getPricePaise(),
+                proposal.getPerUserLimit()
+        );
+
+        ShowResponse createdShow = createShow(showRequest, proposal.getRequestedBy());
+
+        proposal.setStatus(EventRequestStatus.APPROVED);
+        proposal.setReviewedBy(adminUserId);
+        proposal.setReviewedAt(Instant.now());
+        proposal.setShowId(createdShow.getId());
+        EventRequest updated = eventRequestRepository.save(proposal);
+
+        log.info("Event proposal APPROVED id={} by='{}' -> created showId={} with owner='{}'",
+                proposalId, adminUserId, createdShow.getId(), proposal.getRequestedBy());
+
+        return toEventProposalResponse(updated);
+    }
+
+    /**
+     * Rejects an event proposal with an optional explanation.
+     */
+    @Transactional
+    public EventProposalResponse rejectEventProposal(String proposalId, String adminUserId, String reason) {
+        if (!UserContext.isAdmin()) {
+            throw new ForbiddenException("Only administrators can reject event proposals");
+        }
+
+        EventRequest proposal = eventRequestRepository.findById(proposalId)
+                .orElseThrow(() -> new ResourceNotFoundException("Event proposal not found with id: " + proposalId));
+
+        if (proposal.getStatus() != EventRequestStatus.PENDING) {
+            throw new BadRequestException("Event proposal is already " + proposal.getStatus());
+        }
+
+        proposal.setStatus(EventRequestStatus.REJECTED);
+        proposal.setReviewedBy(adminUserId);
+        proposal.setReviewedAt(Instant.now());
+        proposal.setRejectionReason(reason);
+        EventRequest updated = eventRequestRepository.save(proposal);
+
+        log.info("Event proposal REJECTED id={} by='{}' reason='{}'", proposalId, adminUserId, reason);
+
+        return toEventProposalResponse(updated);
+    }
+
+    private EventProposalResponse toEventProposalResponse(EventRequest e) {
+        return new EventProposalResponse(
+                e.getId(),
+                e.getName(),
+                e.getSeats(),
+                e.getPricePaise(),
+                e.getPerUserLimit(),
+                e.getRequestedBy(),
+                e.getStatus(),
+                e.getReviewedBy(),
+                e.getShowId(),
+                e.getRejectionReason(),
+                e.getCreatedAt(),
+                e.getReviewedAt()
+        );
+    }
+
+    /**
      * Retrieves the state and per-seat status of a show, verifying the reconciliation invariant.
+     * Authorized managers (Admins or the Show Owner) can see customer identity details.
      */
     @Transactional(readOnly = true)
     public ShowResponse getShowState(String showId) {
@@ -125,9 +306,12 @@ public class BookingService {
         long confirmedCount = 0;
         List<SeatDto> seatDtos = new ArrayList<>(seats.size());
 
-        boolean isAdmin = UserContext.isAdmin();
+        String currentUser = UserContext.getCurrentUser();
+        boolean isAuthorizedManager = UserContext.isAdmin()
+                || (show.getOwnerUserId() != null && show.getOwnerUserId().equals(currentUser));
+
         Map<String, String> reservationUserMap = Collections.emptyMap();
-        if (isAdmin) {
+        if (isAuthorizedManager) {
             List<Reservation> reservations = reservationRepository.findByShowId(showId);
             reservationUserMap = reservations.stream()
                     .filter(r -> r.getStatus() == ReservationStatus.CONFIRMED || r.getStatus() == ReservationStatus.HELD)
@@ -150,7 +334,7 @@ public class BookingService {
 
             String bookedBy = null;
             String resId = null;
-            if (isAdmin && s.getReservationId() != null && effectiveStatus != SeatStatus.AVAILABLE) {
+            if (isAuthorizedManager && s.getReservationId() != null && effectiveStatus != SeatStatus.AVAILABLE) {
                 bookedBy = reservationUserMap.get(s.getReservationId());
                 resId = s.getReservationId();
             }
@@ -174,6 +358,7 @@ public class BookingService {
                 availableCount,
                 heldCount,
                 confirmedCount,
+                show.getOwnerUserId(),
                 seatDtos
         );
     }
@@ -352,14 +537,21 @@ public class BookingService {
 
     /**
      * Cancels an existing reservation and returns its seats cleanly to AVAILABLE state.
+     * Allowed for:
+     * - The user who made the reservation
+     * - System Administrators
+     * - The Owner/Manager of the show
      */
     @Transactional
     public CancelReservationResponse cancelReservation(String reservationId, String userId) {
         Reservation reservation = reservationRepository.findById(reservationId)
                 .orElseThrow(() -> new ResourceNotFoundException("Reservation not found with id: " + reservationId));
 
-        if (!reservation.getUserId().equals(userId) && !UserContext.isAdmin()) {
-            throw new ForbiddenException("Cannot cancel a reservation owned by another user");
+        Show show = showRepository.findById(reservation.getShowId()).orElse(null);
+        boolean isShowOwner = show != null && show.getOwnerUserId() != null && show.getOwnerUserId().equals(userId);
+
+        if (!reservation.getUserId().equals(userId) && !UserContext.isAdmin() && !isShowOwner) {
+            throw new ForbiddenException("Cannot cancel a reservation owned by another user unless you are an administrator or the event manager");
         }
 
         if (reservation.getStatus() == ReservationStatus.CANCELLED) {
@@ -403,8 +595,6 @@ public class BookingService {
                 seatsToRelease
         );
     }
-
-
 
     /**
      * Background scheduled worker to release expired seat holds.

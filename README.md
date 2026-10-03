@@ -12,8 +12,9 @@ Engineered specifically to handle extreme on-sale stampedes (thousands of concur
 - **SHA-256 Payload-Validated Idempotency**: Caches successful responses by `Idempotency-Key` and compares SHA-256 request digests, rejecting mismatched payloads with `409 IDEMPOTENCY_PAYLOAD_MISMATCH`.
 - **Atomic All-or-Nothing Partial Booking**: If even 1 of $N$ requested seats is already occupied, the transaction rolls back cleanly with a `409 CONFLICT` specifying the conflicting seats.
 - **Strict Reconciliation Invariant**: Enforces `available_seats + held_seats + confirmed_seats == total_seats`.
+- **Event Proposal & Admin Approval Workflow**: Regular users submit proposals (`POST /event-requests`). Only on Admin review & approval (`POST /event-requests/{id}/approve`) does the event go live. The submitting user is appointed the **Event Manager** with seat roster inspection and booking cancellation powers for their event.
 - **Full Observability**: Live Prometheus telemetry at `/metrics` and `/actuator/prometheus`, with liveness and readiness health checks at `/health/live` and `/health/ready`.
-- **Real-Time Interactive HUD & Visualizer**: Dark-mode visualizer with seat map, live telemetry stream, show creator, and built-in hot-seat contention simulator.
+- **Real-Time Interactive HUD & Visualizer**: Dark-mode visualizer with seat map, SweetAlert2 modal receipts and conflict alerts, live telemetry stream, approval queue, and built-in hot-seat contention simulator.
 
 ---
 
@@ -32,7 +33,7 @@ To spin up PostgreSQL, the Spring Boot Backend, and the React Frontend:
 docker-compose up --build
 ```
 - **Backend API**: `http://localhost:8080`
-- **Frontend Dashboard**: `http://localhost:5173`
+- **Frontend Dashboard**: `http://localhost:3000` (or `http://localhost:5173`)
 - **Prometheus Metrics**: `http://localhost:8080/metrics`
 
 ---
@@ -55,53 +56,50 @@ cd frontend
 npm install
 npm run dev
 ```
-Open `http://localhost:5173` in your browser.
+Open `http://localhost:3000` in your browser.
 
 ---
 
-## High-Concurrency Load & Burst Testing
+## Role-Based Access Control & Event Workflow
 
-The repository includes a dedicated high-concurrency burst test harness (`BurstLoadRunner`) that fires hundreds of concurrent requests simultaneously and verifies all system invariants.
-
-### Run via Shell Script (Linux / macOS / Git Bash):
-```bash
-chmod +x burst.sh
-./burst.sh
-```
-
-### Run via PowerShell (Windows):
-```powershell
-.\burst.ps1
-```
-
-### Run via Maven:
-```bash
-.\mvnw.cmd test-compile exec:java -Dexec.mainClass="com.ticketbooking.loadtest.BurstLoadRunner" -Dexec.classpathScope=test
-```
-
-### Test Suite Output Summary:
-```
-================================================================================
-                    HIGH-CONCURRENCY BURST TEST HARNESS                        
-================================================================================
->>> Show initialized: show-id (Seats: 100, Max Per User: 4)
->>> Firing 50 concurrent threads contending for Hot Seat 'A1'...
-[BURST RESULTS] Total Requests: 50 | 201 Created: 1 | 409 Conflicts: 49 | 5xx Errors: 0
-[VERIFICATION] Invariant Check: Exactly 1 seat booked. PASS!
-[VERIFICATION] Zero double-selling invariant: PASS!
-[VERIFICATION] Reconciliation (available + held + confirmed == total): PASS!
-================================================================================
-```
+| Capability | Regular User | Event Manager (Creator) | System Administrator |
+| :--- | :---: | :---: | :---: |
+| **Browse & Reserve Seats** | ✅ (Subject to limit) | ✅ (Subject to limit) | ✅ (Subject to limit) |
+| **Submit Event Proposal** | ✅ (`POST /event-requests`) | ✅ (`POST /event-requests`) | ✅ (Can also direct create) |
+| **Direct Show Creation** | ❌ (Requires Approval) | ❌ (Requires Approval) | ✅ (`POST /shows`) |
+| **Approve / Reject Proposals** | ❌ | ❌ | ✅ (`/approve`, `/reject`) |
+| **Customer Seat Roster Audit** | ❌ (Masked for privacy) | ✅ (Own event only) | ✅ (All events) |
+| **Cancel Customer Bookings** | ❌ (Own bookings only) | ✅ (Own event only) | ✅ (All events) |
 
 ---
 
 ## API Reference
 
-### 1. Create a Show
+### 1. Submit Event Proposal (Regular User)
+```http
+POST /event-requests
+Content-Type: application/json
+Authorization: Bearer user-alice
+
+{
+  "name": "Indie Music Night",
+  "seats": ["A1", "A2", "A3", "B1", "B2"],
+  "price_paise": 35000,
+  "per_user_limit": 4
+}
+```
+
+### 2. Approve Event Proposal (Admin Only)
+```http
+POST /event-requests/{proposal_id}/approve
+Authorization: Bearer admin
+```
+
+### 3. Direct Show Creation (Admin Only)
 ```http
 POST /shows
 Content-Type: application/json
-Authorization: Bearer test-token
+Authorization: Bearer admin
 
 {
   "name": "Coldplay World Tour 2026",
@@ -111,17 +109,18 @@ Authorization: Bearer test-token
 }
 ```
 
-### 2. Get Show Details & Seat Grid
+### 4. Get Show Details & Seat Grid
 ```http
 GET /shows/{show_id}
-Authorization: Bearer test-token
+Authorization: Bearer user-alice
 ```
+*Note: If the requesting user is an Admin or the Event Manager, `booked_by` and `reservation_id` fields are revealed on occupied seats.*
 
-### 3. Reserve Seats (Atomic & Idempotent)
+### 5. Reserve Seats (Atomic & Idempotent)
 ```http
 POST /shows/{show_id}/reserve
 Content-Type: application/json
-Authorization: Bearer test-token
+Authorization: Bearer user-alice
 Idempotency-Key: 7c9e6679-7425-40de-944b-e07fc1f90ae7
 
 {
@@ -129,22 +128,17 @@ Idempotency-Key: 7c9e6679-7425-40de-944b-e07fc1f90ae7
 }
 ```
 
-### 4. Cancel a Reservation
+### 6. Cancel a Reservation
 ```http
 POST /reservations/{reservation_id}/cancel
-Authorization: Bearer test-token
+Authorization: Bearer user-alice
 ```
+*Allowed for the reserving user, the Event Manager, or an Admin.*
 
-### 5. Health & Observability Telemetry
+### 7. Health & Observability Telemetry
 - **Liveness Probe**: `GET /health/live`
 - **Readiness Probe**: `GET /health/ready`
 - **Prometheus Metrics**: `GET /metrics` or `GET /actuator/prometheus`
-
----
-
-## Concurrency Invariants & Architecture Verification
-
-Comprehensive architectural decisions, locking algorithms, idempotency models, failure recovery, CAP theorem trade-offs, and 2 AM paging runbooks are thoroughly documented in [WRITEUP.md](WRITEUP.md).
 
 ---
 
@@ -153,4 +147,4 @@ Comprehensive architectural decisions, locking algorithms, idempotency models, f
 # Execute all unit, integration, and multi-threaded concurrency tests:
 .\mvnw.cmd test
 ```
-All 11 automated test suites will execute, covering single-winner contention storms, user limit bursts, deadlock avoidance, idempotency replays, mismatch rejections, and Prometheus metrics export.
+All 14 automated test suites will execute, covering single-winner contention storms, user limit bursts, deadlock avoidance, idempotency replays, event proposal submissions, admin approval workflows, organizer manager permissions, and Prometheus metrics export.

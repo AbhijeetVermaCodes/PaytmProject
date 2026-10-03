@@ -9,6 +9,7 @@ const darkSwal = Swal.mixin({
     popup: 'rounded-2xl border border-gray-800 shadow-2xl backdrop-blur-md',
     title: 'text-xl font-extrabold text-white',
     htmlContainer: 'text-sm text-gray-300',
+    input: 'bg-gray-900 border border-gray-700 text-white rounded-xl px-3 py-2 text-sm focus:border-purple-500',
     confirmButton: 'px-5 py-2.5 rounded-xl font-bold text-sm bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg hover:from-blue-500 hover:to-indigo-500 transition-all cursor-pointer mx-1.5',
     cancelButton: 'px-5 py-2.5 rounded-xl font-bold text-sm bg-gray-800 text-gray-300 hover:bg-gray-700 transition-all cursor-pointer mx-1.5',
   },
@@ -75,6 +76,28 @@ export const showAlert = {
       reverseButtons: true,
     });
     return result.isConfirmed;
+  },
+
+  /**
+   * Text prompt modal for input (e.g. rejection reasons)
+   */
+  prompt: async (title: string, text: string, placeholder: string = ''): Promise<string | null> => {
+    const result = await darkSwal.fire({
+      icon: 'question',
+      iconColor: '#8B5CF6',
+      title,
+      text,
+      input: 'text',
+      inputPlaceholder: placeholder,
+      showCancelButton: true,
+      confirmButtonText: 'Submit',
+      cancelButtonText: 'Cancel',
+      reverseButtons: true,
+    });
+    if (result.isConfirmed) {
+      return result.value || '';
+    }
+    return null;
   },
 
   /**
