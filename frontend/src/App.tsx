@@ -5,19 +5,35 @@ import {
   RefreshCw,
   CheckCircle,
   XCircle,
-  Clock
+  Clock,
+  Layers
 } from 'lucide-react';
-import { fetchShowState, reserveSeats, cancelReservation, ShowResponse } from './services/api';
+import {
+  fetchShows,
+  fetchShowState,
+  createShow,
+  reserveSeats,
+  cancelReservation,
+  ShowResponse
+} from './services/api';
 import { SeatMap } from './components/SeatMap';
 import { ContentionSimulator } from './components/ContentionSimulator';
 import { ObservabilityHUD } from './components/ObservabilityHUD';
 import { ShowCreator } from './components/ShowCreator';
 
+const STORAGE_KEY_SHOW_ID = 'seatrush_current_show_id';
+const STORAGE_KEY_USER_TOKEN = 'seatrush_user_token';
+
 export function App() {
-  const [currentShowId, setCurrentShowId] = useState<string>('');
+  const [availableShows, setAvailableShows] = useState<ShowResponse[]>([]);
+  const [currentShowId, setCurrentShowId] = useState<string>(() => {
+    return localStorage.getItem(STORAGE_KEY_SHOW_ID) || '';
+  });
   const [show, setShow] = useState<ShowResponse | null>(null);
   const [selectedSeats, setSelectedSeats] = useState<string[]>([]);
-  const [userToken, setUserToken] = useState<string>('user-alice');
+  const [userToken, setUserToken] = useState<string>(() => {
+    return localStorage.getItem(STORAGE_KEY_USER_TOKEN) || 'user-alice';
+  });
   const [idempotencyKey, setIdempotencyKey] = useState<string>(`key-${Date.now()}`);
   const [isBooking, setIsBooking] = useState<boolean>(false);
   const [lastReservationId, setLastReservationId] = useState<string | null>(null);
@@ -29,7 +45,21 @@ export function App() {
     setLogs((prev) => [msg, ...prev.slice(0, 50)]);
   };
 
-  // Poll current show state
+  // Sync token to localStorage
+  const handleUserTokenChange = (token: string) => {
+    setUserToken(token);
+    localStorage.setItem(STORAGE_KEY_USER_TOKEN, token);
+  };
+
+  // Sync show to localStorage
+  const handleSelectShow = (showId: string) => {
+    setCurrentShowId(showId);
+    localStorage.setItem(STORAGE_KEY_SHOW_ID, showId);
+    setSelectedSeats([]);
+    setFeedback(null);
+  };
+
+  // Fetch show details
   const loadShow = async (id?: string) => {
     const targetId = id || currentShowId;
     if (!targetId) return;
@@ -37,33 +67,66 @@ export function App() {
     try {
       const data = await fetchShowState(targetId);
       setShow(data);
-      if (!currentShowId) setCurrentShowId(data.id);
+      if (!currentShowId || currentShowId !== data.id) {
+        setCurrentShowId(data.id);
+        localStorage.setItem(STORAGE_KEY_SHOW_ID, data.id);
+      }
     } catch (e: any) {
       addLog(`Failed to fetch show state: ${e.message}`);
     }
   };
 
-  // Initial load: create or load default show
-  useEffect(() => {
-    const initDefaultShow = async () => {
-      try {
-        const defaultShow = await fetchShowState('default-show').catch(() => null);
-        if (defaultShow) {
-          setShow(defaultShow);
-          setCurrentShowId(defaultShow.id);
+  // Refresh shows list
+  const refreshShowList = async () => {
+    try {
+      const list = await fetchShows();
+      setAvailableShows(list);
+
+      if (list.length > 0) {
+        const savedId = localStorage.getItem(STORAGE_KEY_SHOW_ID);
+        const existing = list.find((s) => s.id === savedId);
+        const targetId = existing ? existing.id : list[0].id;
+        if (targetId !== currentShowId) {
+          setCurrentShowId(targetId);
+          localStorage.setItem(STORAGE_KEY_SHOW_ID, targetId);
         }
-      } catch (e) {
-        // ignore
+      } else {
+        // Auto-seed initial show if none exist
+        const seats: string[] = [];
+        ['A', 'B', 'C', 'D', 'E', 'F'].forEach((row) => {
+          for (let i = 1; i <= 6; i++) {
+            seats.push(`${row}${i}`);
+          }
+        });
+        const created = await createShow({
+          name: 'Coldplay: Music of the Spheres World Tour 2026',
+          seats,
+          price_paise: 250000,
+          per_user_limit: 4,
+        });
+        setAvailableShows([created]);
+        setCurrentShowId(created.id);
+        localStorage.setItem(STORAGE_KEY_SHOW_ID, created.id);
+        setShow(created);
+        addLog(`Auto-provisioned initial event: '${created.name}'`);
       }
-    };
-    initDefaultShow();
+    } catch (e: any) {
+      addLog(`Failed to load shows list: ${e.message}`);
+    }
+  };
+
+  // Initial load
+  useEffect(() => {
+    refreshShowList();
   }, []);
 
-  // Polling interval
+  // Polling interval for active show
   useEffect(() => {
     if (!currentShowId) return;
     loadShow(currentShowId);
-    const interval = setInterval(() => loadShow(currentShowId), 2500);
+    const interval = setInterval(() => {
+      loadShow(currentShowId);
+    }, 2500);
     return () => clearInterval(interval);
   }, [currentShowId]);
 
@@ -93,6 +156,7 @@ export function App() {
       setSelectedSeats([]);
       setIdempotencyKey(`key-${Date.now()}`);
       loadShow();
+      refreshShowList();
     } catch (err: any) {
       setFeedback({
         type: 'error',
@@ -115,6 +179,7 @@ export function App() {
       addLog(`CANCELLED: User '${userToken}' released seats ${res.freed_seats.join(', ')}`);
       setLastReservationId(null);
       loadShow();
+      refreshShowList();
     } catch (err: any) {
       setFeedback({
         type: 'error',
@@ -146,14 +211,34 @@ export function App() {
             </div>
           </div>
 
-          {/* User Token Switcher */}
+          {/* Show Switcher & User Token Switcher */}
           <div className="flex items-center gap-3">
+            {/* Show Dropdown */}
+            {availableShows.length > 0 && (
+              <div className="hidden sm:flex items-center gap-2 bg-gray-900 border border-gray-800 rounded-xl px-3 py-1.5">
+                <Layers className="w-4 h-4 text-blue-400" />
+                <span className="text-xs text-gray-400">Event:</span>
+                <select
+                  value={currentShowId}
+                  onChange={(e) => handleSelectShow(e.target.value)}
+                  className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer max-w-[160px] truncate"
+                >
+                  {availableShows.map((s) => (
+                    <option key={s.id} value={s.id} className="bg-gray-900 text-white">
+                      {s.name} ({s.available_seats} left)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* User Token Switcher */}
             <div className="flex items-center gap-2 bg-gray-900 border border-gray-800 rounded-xl px-3 py-1.5">
               <User className="w-4 h-4 text-purple-400" />
               <span className="text-xs text-gray-400">Auth Token:</span>
               <select
                 value={userToken}
-                onChange={(e) => setUserToken(e.target.value)}
+                onChange={(e) => handleUserTokenChange(e.target.value)}
                 className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
               >
                 <option value="user-alice" className="bg-gray-900">user-alice (Regular)</option>
@@ -164,7 +249,10 @@ export function App() {
             </div>
 
             <button
-              onClick={() => loadShow()}
+              onClick={() => {
+                loadShow();
+                refreshShowList();
+              }}
               title="Refresh State"
               className="p-2 rounded-xl bg-gray-900 border border-gray-800 hover:bg-gray-800 text-gray-300 transition-all cursor-pointer"
             >
@@ -180,7 +268,22 @@ export function App() {
         {show && (
           <div className="glass-panel p-6 rounded-2xl flex flex-wrap items-center justify-between gap-4">
             <div>
-              <span className="text-xs font-bold text-purple-400 uppercase tracking-widest">Active On-Sale Event</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-purple-400 uppercase tracking-widest">Active On-Sale Event</span>
+                {availableShows.length > 1 && (
+                  <select
+                    value={currentShowId}
+                    onChange={(e) => handleSelectShow(e.target.value)}
+                    className="sm:hidden bg-gray-900 border border-gray-800 text-xs text-blue-300 rounded px-2 py-0.5"
+                  >
+                    {availableShows.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
               <h2 className="text-2xl font-black text-white">{show.name}</h2>
               <span className="text-xs text-gray-400 font-mono">Show ID: {show.id}</span>
             </div>
@@ -237,9 +340,9 @@ export function App() {
             ) : (
               <div className="glass-panel p-12 text-center rounded-2xl space-y-4">
                 <Clock className="w-12 h-12 text-purple-400 mx-auto animate-bounce" />
-                <h3 className="text-lg font-bold text-white">No Active Show Selected</h3>
+                <h3 className="text-lg font-bold text-white">Loading Active Show...</h3>
                 <p className="text-sm text-gray-400 max-w-sm mx-auto">
-                  Publish a new show using the creator panel on the right or check your backend connection.
+                  Connecting to the backend booking engine and fetching assigned seat inventory.
                 </p>
               </div>
             )}
@@ -328,6 +431,8 @@ export function App() {
                 onShowCreated={(created) => {
                   setShow(created);
                   setCurrentShowId(created.id);
+                  localStorage.setItem(STORAGE_KEY_SHOW_ID, created.id);
+                  setAvailableShows((prev) => [created, ...prev.filter((s) => s.id !== created.id)]);
                   setActiveTab('simulator');
                   addLog(`Show created: '${created.name}' with ${created.total_seats} seats`);
                 }}

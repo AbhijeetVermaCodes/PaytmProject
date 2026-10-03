@@ -41,6 +41,15 @@ export interface ReadinessResponse {
 
 const BASE_URL = '';
 
+export async function fetchShows(): Promise<ShowResponse[]> {
+  const res = await fetch(`${BASE_URL}/shows`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `Failed to list shows: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function fetchShowState(showId: string): Promise<ShowResponse> {
   const res = await fetch(`${BASE_URL}/shows/${showId}`);
   if (!res.ok) {

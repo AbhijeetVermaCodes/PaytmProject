@@ -162,6 +162,17 @@ public class BookingService {
     }
 
     /**
+     * Retrieves all shows ordered by creation date descending.
+     */
+    @Transactional(readOnly = true)
+    public List<ShowResponse> getAllShows() {
+        List<Show> shows = showRepository.findAllByOrderByCreatedAtDesc();
+        return shows.stream()
+                .map(s -> getShowState(s.getId()))
+                .collect(Collectors.toList());
+    }
+
+    /**
      * Atomically reserves requested seats for an authenticated user with strict race-freedom,
      * deadlock avoidance via deterministic locking order, per-user quota enforcement,
      * and robust idempotency replay.

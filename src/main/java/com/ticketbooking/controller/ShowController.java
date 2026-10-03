@@ -31,6 +31,15 @@ public class ShowController {
     }
 
     /**
+     * List all shows — GET /shows
+     */
+    @GetMapping
+    public ResponseEntity<java.util.List<ShowResponse>> getAllShows() {
+        java.util.List<ShowResponse> responses = bookingService.getAllShows();
+        return ResponseEntity.ok(responses);
+    }
+
+    /**
      * 4. Show state — GET /shows/{id}
      * Returns per-seat status and counts. Invariant holds: available + held + confirmed == total_seats.
      */
