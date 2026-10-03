@@ -33,6 +33,7 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/ticket_booking
       SPRING_DATASOURCE_USERNAME: postgres
       SPRING_DATASOURCE_PASSWORD: postgrespassword
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
       DB_POOL_MAX: 50
     ports:
       - "8080:8080"
