@@ -53,16 +53,16 @@ export const SeatMap: React.FC<SeatMapProps> = ({
   const activeOccupiedSeat = inspectorSeat || hoveredSeat;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full max-w-full overflow-hidden">
       {/* Main Seat Matrix Card */}
-      <div className="glass-panel p-6 rounded-2xl shadow-2xl relative overflow-hidden">
+      <div className="glass-panel p-4 sm:p-6 rounded-2xl shadow-2xl relative w-full overflow-hidden">
         {/* Background aesthetic glow */}
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3/4 h-24 bg-gradient-to-b from-blue-600/15 via-purple-600/5 to-transparent blur-2xl pointer-events-none" />
 
         {/* Stage / Screen Representation */}
-        <div className="flex flex-col items-center mb-8">
+        <div className="flex flex-col items-center mb-6 sm:mb-8">
           <div className="w-4/5 h-2.5 bg-gradient-to-r from-blue-500 via-purple-500 to-blue-500 rounded-full shadow-[0_0_20px_rgba(59,130,246,0.6)] mb-2" />
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-center gap-2">
             <span className="text-xs uppercase tracking-widest text-gray-400 font-semibold">STAGE / SCREEN</span>
             {isAdmin && (
               <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/30">
@@ -72,106 +72,108 @@ export const SeatMap: React.FC<SeatMapProps> = ({
           </div>
         </div>
 
-        {/* Seating Grid */}
-        <div className="flex flex-col items-center gap-3 my-6">
-          {Object.keys(rows).map((rowLetter) => (
-            <div key={rowLetter} className="flex items-center gap-2">
-              <span className="w-6 text-center text-xs font-bold text-gray-500">{rowLetter}</span>
-              <div className="flex flex-wrap gap-2 justify-center">
-                {rows[rowLetter].map((seat) => {
-                  const isSelected = selectedSeats.includes(seat.seat_number);
-                  const isAvailable = seat.status === 'available';
-                  const isHeld = seat.status === 'held';
-                  const isConfirmed = seat.status === 'confirmed';
+        {/* Seating Grid Container (Scrollable horizontally when rows are wide) */}
+        <div className="w-full overflow-x-auto pb-4 pt-2 px-1 scrollbar-thin">
+          <div className="flex flex-col items-center gap-3 min-w-fit mx-auto">
+            {Object.keys(rows).map((rowLetter) => (
+              <div key={rowLetter} className="flex items-center gap-2">
+                <span className="w-6 text-center text-xs font-bold text-gray-500 shrink-0">{rowLetter}</span>
+                <div className="flex flex-nowrap gap-2 justify-center">
+                  {rows[rowLetter].map((seat) => {
+                    const isSelected = selectedSeats.includes(seat.seat_number);
+                    const isAvailable = seat.status === 'available';
+                    const isHeld = seat.status === 'held';
+                    const isConfirmed = seat.status === 'confirmed';
 
-                  let bgClass = 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300 hover:bg-emerald-800/80 hover:border-emerald-400 hover:scale-105';
-                  if (isSelected) {
-                    bgClass = 'bg-blue-600 border-blue-400 text-white glow-blue scale-110 ring-2 ring-blue-300 animate-pulse';
-                  } else if (isHeld) {
-                    bgClass = 'bg-amber-950/70 border-amber-500/50 text-amber-300 cursor-pointer opacity-90 hover:ring-2 hover:ring-amber-400';
-                  } else if (isConfirmed) {
-                    bgClass = isAdmin
-                      ? 'bg-purple-950/70 border-purple-500/50 text-purple-300 cursor-pointer hover:scale-105 hover:border-purple-400 ring-1 ring-purple-500/30 shadow-purple-500/20'
-                      : 'bg-gray-800/80 border-gray-700 text-gray-500 cursor-not-allowed opacity-60';
-                  }
-
-                  const handleSeatClick = () => {
-                    if (isAdmin && !isAvailable) {
-                      setInspectorSeat(seat);
-                    } else if (isAvailable || isSelected) {
-                      onToggleSeat(seat.seat_number);
+                    let bgClass = 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300 hover:bg-emerald-800/80 hover:border-emerald-400 hover:scale-105';
+                    if (isSelected) {
+                      bgClass = 'bg-blue-600 border-blue-400 text-white glow-blue scale-110 ring-2 ring-blue-300 animate-pulse';
+                    } else if (isHeld) {
+                      bgClass = 'bg-amber-950/70 border-amber-500/50 text-amber-300 cursor-pointer opacity-90 hover:ring-2 hover:ring-amber-400';
+                    } else if (isConfirmed) {
+                      bgClass = isAdmin
+                        ? 'bg-purple-950/70 border-purple-500/50 text-purple-300 cursor-pointer hover:scale-105 hover:border-purple-400 ring-1 ring-purple-500/30 shadow-purple-500/20'
+                        : 'bg-gray-800/80 border-gray-700 text-gray-500 cursor-not-allowed opacity-60';
                     }
-                  };
 
-                  return (
-                    <div key={seat.seat_number} className="relative group">
-                      <button
-                        id={`seat-btn-${seat.seat_number}`}
-                        disabled={disabled || (!isAvailable && !isSelected && !isAdmin)}
-                        onClick={handleSeatClick}
-                        onMouseEnter={() => setHoveredSeat(seat)}
-                        onMouseLeave={() => setHoveredSeat(null)}
-                        className={`relative w-10 h-10 rounded-xl border flex flex-col items-center justify-center font-bold text-xs transition-all duration-200 shadow-md ${bgClass}`}
-                      >
-                        <span>{seat.seat_number}</span>
-                        {isConfirmed && (
-                          isAdmin ? (
-                            <UserCheck className="w-2.5 h-2.5 mt-0.5 text-purple-300" />
-                          ) : (
-                            <Lock className="w-2.5 h-2.5 mt-0.5 text-gray-400" />
-                          )
-                        )}
-                        {isSelected && <CheckCircle2 className="w-2.5 h-2.5 mt-0.5 text-white" />}
-                      </button>
+                    const handleSeatClick = () => {
+                      if (isAdmin && !isAvailable) {
+                        setInspectorSeat(seat);
+                      } else if (isAvailable || isSelected) {
+                        onToggleSeat(seat.seat_number);
+                      }
+                    };
 
-                      {/* Tooltip for Admin & Users */}
-                      {isAdmin && seat.booked_by && (
-                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center z-50 pointer-events-none min-w-[140px]">
-                          <div className="bg-gray-900 border border-purple-500/40 text-[11px] rounded-lg p-2 shadow-2xl text-center space-y-0.5">
-                            <div className="font-bold text-white flex items-center justify-center gap-1">
-                              <span>Seat {seat.seat_number}</span>
-                              <span className={`text-[9px] uppercase px-1 rounded ${isConfirmed ? 'bg-purple-500/20 text-purple-300' : 'bg-amber-500/20 text-amber-300'}`}>
-                                {seat.status}
-                              </span>
-                            </div>
-                            <div className="text-purple-300 font-semibold flex items-center justify-center gap-1">
-                              <UserCheck className="w-3 h-3" />
-                              <span>{seat.booked_by}</span>
-                            </div>
-                            {seat.reservation_id && (
-                              <div className="text-[9px] text-gray-400 font-mono">
-                                ID: {seat.reservation_id.slice(0, 8)}...
+                    return (
+                      <div key={seat.seat_number} className="relative group shrink-0">
+                        <button
+                          id={`seat-btn-${seat.seat_number}`}
+                          disabled={disabled || (!isAvailable && !isSelected && !isAdmin)}
+                          onClick={handleSeatClick}
+                          onMouseEnter={() => setHoveredSeat(seat)}
+                          onMouseLeave={() => setHoveredSeat(null)}
+                          className={`relative w-9 h-9 sm:w-10 sm:h-10 rounded-xl border flex flex-col items-center justify-center font-bold text-xs transition-all duration-200 shadow-md ${bgClass}`}
+                        >
+                          <span>{seat.seat_number}</span>
+                          {isConfirmed && (
+                            isAdmin ? (
+                              <UserCheck className="w-2.5 h-2.5 mt-0.5 text-purple-300" />
+                            ) : (
+                              <Lock className="w-2.5 h-2.5 mt-0.5 text-gray-400" />
+                            )
+                          )}
+                          {isSelected && <CheckCircle2 className="w-2.5 h-2.5 mt-0.5 text-white" />}
+                        </button>
+
+                        {/* Tooltip for Admin & Users */}
+                        {isAdmin && seat.booked_by && (
+                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center z-50 pointer-events-none min-w-[140px] max-w-[200px]">
+                            <div className="bg-gray-900 border border-purple-500/40 text-[11px] rounded-lg p-2 shadow-2xl text-center space-y-0.5 w-full">
+                              <div className="font-bold text-white flex items-center justify-center gap-1">
+                                <span>Seat {seat.seat_number}</span>
+                                <span className={`text-[9px] uppercase px-1 rounded ${isConfirmed ? 'bg-purple-500/20 text-purple-300' : 'bg-amber-500/20 text-amber-300'}`}>
+                                  {seat.status}
+                                </span>
                               </div>
-                            )}
+                              <div className="text-purple-300 font-semibold flex items-center justify-center gap-1 truncate">
+                                <UserCheck className="w-3 h-3 shrink-0" />
+                                <span className="truncate">{seat.booked_by}</span>
+                              </div>
+                              {seat.reservation_id && (
+                                <div className="text-[9px] text-gray-400 font-mono truncate">
+                                  ID: {seat.reservation_id.slice(0, 8)}...
+                                </div>
+                              )}
+                            </div>
+                            <div className="w-2 h-2 bg-gray-900 border-r border-b border-purple-500/40 rotate-45 -mt-1" />
                           </div>
-                          <div className="w-2 h-2 bg-gray-900 border-r border-b border-purple-500/40 rotate-45 -mt-1" />
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <span className="w-6 text-center text-xs font-bold text-gray-500 shrink-0">{rowLetter}</span>
               </div>
-              <span className="w-6 text-center text-xs font-bold text-gray-500">{rowLetter}</span>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
 
         {/* Legend */}
-        <div className="mt-8 pt-6 border-t border-gray-800/80 flex flex-wrap items-center justify-center gap-6 text-xs text-gray-300">
+        <div className="mt-6 pt-6 border-t border-gray-800/80 flex flex-wrap items-center justify-center gap-4 sm:gap-6 text-xs text-gray-300">
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 rounded-md bg-emerald-950/80 border border-emerald-500/60" />
+            <div className="w-3.5 h-3.5 rounded-md bg-emerald-950/80 border border-emerald-500/60" />
             <span>Available</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 rounded-md bg-blue-600 border border-blue-400 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
+            <div className="w-3.5 h-3.5 rounded-md bg-blue-600 border border-blue-400 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
             <span>Selected</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 rounded-md bg-amber-950/80 border border-amber-500/60" />
-            <span>Held (Expiring)</span>
+            <div className="w-3.5 h-3.5 rounded-md bg-amber-950/80 border border-amber-500/60" />
+            <span>Held</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className={`w-4 h-4 rounded-md ${isAdmin ? 'bg-purple-950/80 border border-purple-500/60' : 'bg-gray-800/80 border border-gray-700'}`} />
+            <div className={`w-3.5 h-3.5 rounded-md ${isAdmin ? 'bg-purple-950/80 border border-purple-500/60' : 'bg-gray-800/80 border border-gray-700'}`} />
             <span>{isAdmin ? 'Confirmed (Admin Visible)' : 'Confirmed (Sold)'}</span>
           </div>
           <div className="flex items-center gap-1 text-gray-400">
@@ -184,30 +186,30 @@ export const SeatMap: React.FC<SeatMapProps> = ({
       {/* Admin Quick Inspector Card */}
       {isAdmin && activeOccupiedSeat && (
         <div className="glass-panel p-4 rounded-xl border border-purple-500/40 bg-purple-950/20 flex flex-wrap items-center justify-between gap-4 animate-fadeIn">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-purple-600/20 border border-purple-500/40 flex items-center justify-center text-purple-300 font-extrabold text-base">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-lg bg-purple-600/20 border border-purple-500/40 flex items-center justify-center text-purple-300 font-extrabold text-base shrink-0">
               {activeOccupiedSeat.seat_number}
             </div>
-            <div>
-              <div className="flex items-center gap-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs font-bold text-white">Seat {activeOccupiedSeat.seat_number} Audit Details</span>
                 <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${activeOccupiedSeat.status === 'confirmed' ? 'bg-purple-500/20 text-purple-300' : 'bg-emerald-500/20 text-emerald-300'}`}>
                   {activeOccupiedSeat.status}
                 </span>
               </div>
-              <div className="text-xs text-gray-300 flex items-center gap-3 pt-0.5">
+              <div className="text-xs text-gray-300 flex flex-wrap items-center gap-3 pt-0.5">
                 {activeOccupiedSeat.booked_by ? (
                   <span className="flex items-center gap-1 text-purple-200">
-                    <UserCheck className="w-3.5 h-3.5 text-purple-400" />
+                    <UserCheck className="w-3.5 h-3.5 text-purple-400 shrink-0" />
                     Booked By: <strong className="font-mono">{activeOccupiedSeat.booked_by}</strong>
                   </span>
                 ) : (
                   <span className="text-gray-400">Not reserved yet</span>
                 )}
                 {activeOccupiedSeat.reservation_id && (
-                  <span className="text-gray-400 font-mono text-[11px] flex items-center gap-1">
-                    <Hash className="w-3 h-3 text-gray-500" />
-                    Res ID: {activeOccupiedSeat.reservation_id}
+                  <span className="text-gray-400 font-mono text-[11px] flex items-center gap-1 truncate max-w-xs" title={activeOccupiedSeat.reservation_id}>
+                    <Hash className="w-3 h-3 text-gray-500 shrink-0" />
+                    <span className="truncate">Res ID: {activeOccupiedSeat.reservation_id}</span>
                   </span>
                 )}
               </div>
@@ -217,10 +219,10 @@ export const SeatMap: React.FC<SeatMapProps> = ({
           {activeOccupiedSeat.reservation_id && onCancelReservation && (
             <button
               onClick={() => onCancelReservation(activeOccupiedSeat.reservation_id!)}
-              className="py-1.5 px-3 rounded-lg bg-red-600/80 hover:bg-red-500 text-white text-xs font-bold transition-all flex items-center gap-1 shadow-md cursor-pointer"
+              className="py-1.5 px-3 rounded-lg bg-red-600/80 hover:bg-red-500 text-white text-xs font-bold transition-all flex items-center gap-1 shadow-md cursor-pointer shrink-0"
             >
               <XCircle className="w-3.5 h-3.5" />
-              Cancel Reservation (Admin Override)
+              Revoke Reservation
             </button>
           )}
         </div>
@@ -228,15 +230,15 @@ export const SeatMap: React.FC<SeatMapProps> = ({
 
       {/* Admin Seat & Customer Roster Table */}
       {isAdmin && (
-        <div className="glass-panel p-6 rounded-2xl space-y-4 border border-purple-500/20">
+        <div className="glass-panel p-4 sm:p-6 rounded-2xl space-y-4 border border-purple-500/20 overflow-hidden w-full">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-2">
-              <ShieldAlert className="w-5 h-5 text-purple-400" />
+              <ShieldAlert className="w-5 h-5 text-purple-400 shrink-0" />
               <h3 className="text-base font-bold text-white">Admin Seat & Customer Audit Roster</h3>
-              <span className="text-xs text-gray-400">({seats.length} total seats)</span>
+              <span className="text-xs text-gray-400 font-mono">({seats.length} total)</span>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               {/* Search input */}
               <div className="relative">
                 <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
@@ -245,13 +247,13 @@ export const SeatMap: React.FC<SeatMapProps> = ({
                   placeholder="Filter seat, user, or status..."
                   value={rosterSearch}
                   onChange={(e) => setRosterSearch(e.target.value)}
-                  className="bg-gray-900 border border-gray-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 w-52"
+                  className="bg-gray-900 border border-gray-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 w-44 sm:w-56"
                 />
               </div>
 
               <button
                 onClick={() => setShowRosterTable(!showRosterTable)}
-                className="text-xs text-purple-400 hover:text-purple-300 font-semibold cursor-pointer"
+                className="text-xs text-purple-400 hover:text-purple-300 font-semibold cursor-pointer shrink-0"
               >
                 {showRosterTable ? 'Hide Table' : 'Show Table'}
               </button>
@@ -259,16 +261,16 @@ export const SeatMap: React.FC<SeatMapProps> = ({
           </div>
 
           {showRosterTable && (
-            <div className="overflow-x-auto rounded-xl border border-gray-800">
-              <table className="w-full text-left text-xs text-gray-300">
+            <div className="overflow-x-auto rounded-xl border border-gray-800 w-full scrollbar-thin">
+              <table className="w-full text-left text-xs text-gray-300 min-w-[580px]">
                 <thead className="bg-gray-900/90 text-gray-400 uppercase font-semibold text-[10px] border-b border-gray-800">
                   <tr>
-                    <th className="px-4 py-3">Seat #</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3">Booked By (Customer)</th>
-                    <th className="px-4 py-3">Reservation Reference</th>
-                    <th className="px-4 py-3">Price</th>
-                    <th className="px-4 py-3 text-right">Action</th>
+                    <th className="px-3 sm:px-4 py-3">Seat #</th>
+                    <th className="px-3 sm:px-4 py-3">Status</th>
+                    <th className="px-3 sm:px-4 py-3">Booked By (Customer)</th>
+                    <th className="px-3 sm:px-4 py-3">Reservation Ref</th>
+                    <th className="px-3 sm:px-4 py-3">Price</th>
+                    <th className="px-3 sm:px-4 py-3 text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-800/60 bg-gray-950/40">
@@ -281,10 +283,10 @@ export const SeatMap: React.FC<SeatMapProps> = ({
                           className="hover:bg-gray-900/50 transition-colors cursor-pointer"
                           onClick={() => setInspectorSeat(seat)}
                         >
-                          <td className="px-4 py-3 font-bold text-white font-mono">{seat.seat_number}</td>
-                          <td className="px-4 py-3">
+                          <td className="px-3 sm:px-4 py-3 font-bold text-white font-mono">{seat.seat_number}</td>
+                          <td className="px-3 sm:px-4 py-3">
                             <span
-                              className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
+                              className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold inline-block ${
                                 seat.status === 'confirmed'
                                   ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
                                   : seat.status === 'held'
@@ -295,21 +297,27 @@ export const SeatMap: React.FC<SeatMapProps> = ({
                               {seat.status}
                             </span>
                           </td>
-                          <td className="px-4 py-3">
+                          <td className="px-3 sm:px-4 py-3">
                             {seat.booked_by ? (
                               <div className="flex items-center gap-1.5 font-bold text-purple-200">
-                                <UserCheck className="w-3.5 h-3.5 text-purple-400" />
-                                <span className="font-mono">{seat.booked_by}</span>
+                                <UserCheck className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                                <span className="font-mono truncate max-w-[120px]">{seat.booked_by}</span>
                               </div>
                             ) : (
                               <span className="text-gray-500 italic">— Available —</span>
                             )}
                           </td>
-                          <td className="px-4 py-3 font-mono text-[11px] text-gray-400">
-                            {seat.reservation_id ? seat.reservation_id : '—'}
+                          <td className="px-3 sm:px-4 py-3 font-mono text-[11px] text-gray-400">
+                            {seat.reservation_id ? (
+                              <span className="truncate max-w-[110px] sm:max-w-[140px] block" title={seat.reservation_id}>
+                                {seat.reservation_id.slice(0, 8)}...
+                              </span>
+                            ) : (
+                              '—'
+                            )}
                           </td>
-                          <td className="px-4 py-3 font-mono text-emerald-400">₹{priceRupees}</td>
-                          <td className="px-4 py-3 text-right">
+                          <td className="px-3 sm:px-4 py-3 font-mono text-emerald-400">₹{priceRupees}</td>
+                          <td className="px-3 sm:px-4 py-3 text-right">
                             {isOccupied && seat.reservation_id && onCancelReservation ? (
                               <button
                                 onClick={(e) => {
