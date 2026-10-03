@@ -18,6 +18,41 @@ Engineered specifically to handle extreme on-sale stampedes (thousands of concur
 
 ---
 
+## Technology Stack
+
+### Backend & Core Platform
+- **Java 17 / 18 / 25**: Core runtime language with native virtual thread / concurrency capabilities.
+- **Spring Boot 3.3.4**: Modern microservice web framework with graceful shutdown support.
+- **Spring Web (MVC)**: REST API layer with RFC 7807 compliant error responses.
+- **Spring Data JPA & Hibernate**: ORM with deterministic row-level write locks (`PESSIMISTIC_WRITE`).
+- **Spring Validation (Jakarta)**: Robust schema and payload constraints.
+- **Jackson & jsr310**: High-speed JSON serialization and canonical SHA-256 payload caching.
+- **SLF4J & MDC**: Distributed correlation and user request tracing via `X-Request-Id`.
+
+### Database & Persistence
+- **PostgreSQL 16**: Primary production ACID relational store.
+- **H2 In-Memory Database**: Embedded PostgreSQL-mode database for zero-config local testing.
+- **HikariCP**: Production-tuned connection pool with strict timeout bounds.
+
+### Observability & Telemetry
+- **Spring Boot Actuator**: Health probes (`/health/live`, `/health/ready`).
+- **Micrometer & Prometheus**: Live real-time application metrics export (`/metrics`, `/actuator/prometheus`).
+
+### Frontend & Visualizer
+- **React 18.3 & TypeScript 5.5**: High-performance typed component architecture.
+- **Vite 5.4**: Lightning-fast build tool and API reverse-proxy dev server.
+- **Tailwind CSS 3.4**: Responsive dark-mode styling with glassmorphic aesthetics.
+- **SweetAlert2**: Interactive dark-theme transaction receipts, conflict modals, and confirmation dialogs.
+- **Lucide React**: Modern iconography for seats, telemetry, and status indicators.
+
+### DevOps, Tooling & Load Testing
+- **Docker & Docker Compose**: Full multi-container containerization with health checks.
+- **JUnit 5 & Spring Boot Test**: Multi-threaded concurrency and integration test suites.
+- **Custom Java Load Runner (`BurstLoadRunner`)**: Multi-threaded stampede load generator (up to 1,500 parallel requests).
+- **Maven Wrapper (`./mvnw`)**: Portable build automation.
+
+---
+
 ## Quick Start Guide
 
 ### Prerequisites

@@ -8,6 +8,7 @@ export default defineConfig({
     proxy: {
       '/shows': 'http://localhost:8080',
       '/reservations': 'http://localhost:8080',
+      '/event-requests': 'http://localhost:8080',
       '/health': 'http://localhost:8080',
       '/metrics': 'http://localhost:8080',
       '/actuator': 'http://localhost:8080',
