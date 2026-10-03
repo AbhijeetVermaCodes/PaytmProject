@@ -31,6 +31,8 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
+import com.ticketbooking.observability.MetricsService;
+
 @Service
 public class BookingService {
 
@@ -40,6 +42,7 @@ public class BookingService {
     private final SeatRepository seatRepository;
     private final ReservationRepository reservationRepository;
     private final IdempotencyRecordRepository idempotencyRecordRepository;
+    private final MetricsService metricsService;
     private final ObjectMapper objectMapper;
 
     @Value("${booking.default-per-user-limit:4}")
@@ -52,11 +55,13 @@ public class BookingService {
                           SeatRepository seatRepository,
                           ReservationRepository reservationRepository,
                           IdempotencyRecordRepository idempotencyRecordRepository,
+                          MetricsService metricsService,
                           ObjectMapper objectMapper) {
         this.showRepository = showRepository;
         this.seatRepository = seatRepository;
         this.reservationRepository = reservationRepository;
         this.idempotencyRecordRepository = idempotencyRecordRepository;
+        this.metricsService = metricsService;
         this.objectMapper = objectMapper;
     }
 
@@ -138,6 +143,7 @@ public class BookingService {
 
         boolean invariantHolds = (availableCount + heldCount + confirmedCount) == show.getTotalSeats();
         if (!invariantHolds) {
+            metricsService.recordInvariantViolation(showId);
             log.error("INVARIANT VIOLATION on show {}: available({}) + held({}) + confirmed({}) != total({})",
                     showId, availableCount, heldCount, confirmedCount, show.getTotalSeats());
         }
@@ -196,11 +202,13 @@ public class BookingService {
         if (existingRecordOpt.isPresent()) {
             IdempotencyRecord record = existingRecordOpt.get();
             if (!record.getRequestHash().equals(payloadHash)) {
+                metricsService.recordReservationDeclined(showId, "idempotency_payload_mismatch");
                 log.warn("Idempotency conflict: key='{}' user='{}' reused with different payload", idempotencyKey, userId);
                 throw new DomainConflictException("IDEMPOTENCY_PAYLOAD_MISMATCH",
                         "Idempotency key was previously used with a different seat selection or show");
             }
             if (record.getStatus() == IdempotencyStatus.COMPLETED && record.getResponseBody() != null) {
+                metricsService.recordIdempotentReplay(showId);
                 log.info("Idempotent replay: key='{}' user='{}' returning cached response", idempotencyKey, userId);
                 try {
                     return objectMapper.readValue(record.getResponseBody(), ReserveSeatResponse.class);
@@ -208,6 +216,7 @@ public class BookingService {
                     log.error("Failed to deserialize cached idempotency response", e);
                 }
             } else if (record.getStatus() == IdempotencyStatus.IN_PROGRESS) {
+                metricsService.recordReservationDeclined(showId, "concurrent_in_progress");
                 throw new DomainConflictException("CONCURRENT_REQUEST_IN_PROGRESS",
                         "A reservation request with this idempotency key is currently executing");
             }
@@ -244,6 +253,7 @@ public class BookingService {
         }
 
         if (!unavailableSeats.isEmpty()) {
+            metricsService.recordReservationDeclined(showId, "seat_taken");
             log.info("Reservation declined: seats taken {} on show {} for user {}", unavailableSeats, showId, userId);
             throw new DomainConflictException("SEAT_ALREADY_TAKEN",
                     "One or more requested seats are already taken or held", unavailableSeats);
@@ -255,6 +265,7 @@ public class BookingService {
                     userId, showId, List.of(ReservationStatus.CONFIRMED, ReservationStatus.HELD));
 
             if (currentActiveSeats + sortedSeatNumbers.size() > show.getPerUserLimit()) {
+                metricsService.recordReservationDeclined(showId, "user_limit_exceeded");
                 log.info("Reservation declined: user limit exceeded user={} active={} requested={} limit={}",
                         userId, currentActiveSeats, sortedSeatNumbers.size(), show.getPerUserLimit());
                 throw new DomainConflictException("PER_USER_LIMIT_EXCEEDED",
@@ -297,6 +308,7 @@ public class BookingService {
                 log.warn("Idempotency key collision caught during record creation: key='{}'", idempotencyKey);
             }
 
+            metricsService.recordReservationConfirmed(showId, sortedSeatNumbers.size());
             log.info("Reservation CONFIRMED: res_id={} show={} user={} seats={} amount={}",
                     savedReservation.getId(), showId, userId, sortedSeatNumbers, totalAmountPaise);
 
@@ -349,6 +361,8 @@ public class BookingService {
 
         reservation.setStatus(ReservationStatus.CANCELLED);
         reservationRepository.save(reservation);
+
+        metricsService.recordReservationCancelled(reservation.getShowId(), seatsToRelease.size());
 
         log.info("Reservation CANCELLED: res_id={} user={} released_seats={}",
                 reservationId, userId, seatsToRelease);
