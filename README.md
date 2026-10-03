@@ -105,9 +105,9 @@ Authorization: Bearer test-token
 
 {
   "name": "Coldplay World Tour 2026",
-  "total_seats": 50,
-  "max_seats_per_user": 4,
-  "seat_price": 250000
+  "seats": ["A1", "A2", "A3", "A4", "A5", "B1", "B2", "B3", "B4", "B5"],
+  "price_paise": 250000,
+  "per_user_limit": 4
 }
 ```
 
