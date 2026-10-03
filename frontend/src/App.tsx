@@ -1,0 +1,346 @@
+import { useState, useEffect } from 'react';
+import {
+  Ticket,
+  User,
+  RefreshCw,
+  CheckCircle,
+  XCircle,
+  Clock
+} from 'lucide-react';
+import { fetchShowState, reserveSeats, cancelReservation, ShowResponse } from './services/api';
+import { SeatMap } from './components/SeatMap';
+import { ContentionSimulator } from './components/ContentionSimulator';
+import { ObservabilityHUD } from './components/ObservabilityHUD';
+import { ShowCreator } from './components/ShowCreator';
+
+export function App() {
+  const [currentShowId, setCurrentShowId] = useState<string>('');
+  const [show, setShow] = useState<ShowResponse | null>(null);
+  const [selectedSeats, setSelectedSeats] = useState<string[]>([]);
+  const [userToken, setUserToken] = useState<string>('user-alice');
+  const [idempotencyKey, setIdempotencyKey] = useState<string>(`key-${Date.now()}`);
+  const [isBooking, setIsBooking] = useState<boolean>(false);
+  const [lastReservationId, setLastReservationId] = useState<string | null>(null);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<'simulator' | 'observability' | 'create'>('simulator');
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const addLog = (msg: string) => {
+    setLogs((prev) => [msg, ...prev.slice(0, 50)]);
+  };
+
+  // Poll current show state
+  const loadShow = async (id?: string) => {
+    const targetId = id || currentShowId;
+    if (!targetId) return;
+
+    try {
+      const data = await fetchShowState(targetId);
+      setShow(data);
+      if (!currentShowId) setCurrentShowId(data.id);
+    } catch (e: any) {
+      addLog(`Failed to fetch show state: ${e.message}`);
+    }
+  };
+
+  // Initial load: create or load default show
+  useEffect(() => {
+    const initDefaultShow = async () => {
+      try {
+        const defaultShow = await fetchShowState('default-show').catch(() => null);
+        if (defaultShow) {
+          setShow(defaultShow);
+          setCurrentShowId(defaultShow.id);
+        }
+      } catch (e) {
+        // ignore
+      }
+    };
+    initDefaultShow();
+  }, []);
+
+  // Polling interval
+  useEffect(() => {
+    if (!currentShowId) return;
+    loadShow(currentShowId);
+    const interval = setInterval(() => loadShow(currentShowId), 2500);
+    return () => clearInterval(interval);
+  }, [currentShowId]);
+
+  const handleToggleSeat = (seatNumber: string) => {
+    setSelectedSeats((prev) =>
+      prev.includes(seatNumber) ? prev.filter((s) => s !== seatNumber) : [...prev, seatNumber]
+    );
+  };
+
+  const handleReserve = async () => {
+    if (!show || selectedSeats.length === 0) return;
+    setIsBooking(true);
+    setFeedback(null);
+
+    try {
+      const res = await reserveSeats(
+        show.id,
+        { seats: selectedSeats, idempotency_key: idempotencyKey },
+        userToken
+      );
+      setLastReservationId(res.reservation_id);
+      setFeedback({
+        type: 'success',
+        message: `Reservation Confirmed! Reserved ${res.seats.join(', ')} for ₹${(res.amount_paise / 100).toFixed(2)} (ID: ${res.reservation_id.slice(0, 8)}...)`,
+      });
+      addLog(`CONFIRMED: User '${userToken}' booked ${res.seats.join(', ')} (₹${(res.amount_paise / 100).toFixed(2)})`);
+      setSelectedSeats([]);
+      setIdempotencyKey(`key-${Date.now()}`);
+      loadShow();
+    } catch (err: any) {
+      setFeedback({
+        type: 'error',
+        message: `${err.reason || 'DECLINED'}: ${err.message}`,
+      });
+      addLog(`DECLINED (${err.reason || err.status}): ${err.message}`);
+    } finally {
+      setIsBooking(false);
+    }
+  };
+
+  const handleCancelLast = async () => {
+    if (!lastReservationId) return;
+    try {
+      const res = await cancelReservation(lastReservationId, userToken);
+      setFeedback({
+        type: 'success',
+        message: `Cancelled reservation ${res.reservation_id.slice(0, 8)}... Freed seats: ${res.freed_seats.join(', ')}`,
+      });
+      addLog(`CANCELLED: User '${userToken}' released seats ${res.freed_seats.join(', ')}`);
+      setLastReservationId(null);
+      loadShow();
+    } catch (err: any) {
+      setFeedback({
+        type: 'error',
+        message: `Cancellation failed: ${err.message}`,
+      });
+      addLog(`CANCEL FAILED: ${err.message}`);
+    }
+  };
+
+  const totalPriceRupees = show ? ((show.price_paise * selectedSeats.length) / 100).toFixed(2) : '0.00';
+
+  return (
+    <div className="min-h-screen bg-[#0B0F19] text-gray-100 flex flex-col">
+      {/* Header Bar */}
+      <header className="border-b border-gray-800/80 bg-gray-950/60 backdrop-blur-md sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-purple-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
+              <Ticket className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="font-extrabold text-xl tracking-tight text-white">SeatRush</h1>
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                  High-Concurrency
+                </span>
+              </div>
+              <p className="text-[11px] text-gray-400">Race-Free Distributed Ticket Booking Engine</p>
+            </div>
+          </div>
+
+          {/* User Token Switcher */}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 bg-gray-900 border border-gray-800 rounded-xl px-3 py-1.5">
+              <User className="w-4 h-4 text-purple-400" />
+              <span className="text-xs text-gray-400">Auth Token:</span>
+              <select
+                value={userToken}
+                onChange={(e) => setUserToken(e.target.value)}
+                className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
+              >
+                <option value="user-alice" className="bg-gray-900">user-alice (Regular)</option>
+                <option value="user-bob" className="bg-gray-900">user-bob (Regular)</option>
+                <option value="user-charlie" className="bg-gray-900">user-charlie (Regular)</option>
+                <option value="admin" className="bg-gray-900">admin (Admin Role)</option>
+              </select>
+            </div>
+
+            <button
+              onClick={() => loadShow()}
+              title="Refresh State"
+              className="p-2 rounded-xl bg-gray-900 border border-gray-800 hover:bg-gray-800 text-gray-300 transition-all cursor-pointer"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Container */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-8">
+        {/* Show Selector & Summary Banner */}
+        {show && (
+          <div className="glass-panel p-6 rounded-2xl flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <span className="text-xs font-bold text-purple-400 uppercase tracking-widest">Active On-Sale Event</span>
+              <h2 className="text-2xl font-black text-white">{show.name}</h2>
+              <span className="text-xs text-gray-400 font-mono">Show ID: {show.id}</span>
+            </div>
+
+            {/* Inventory Status Badges */}
+            <div className="flex flex-wrap gap-4">
+              <div className="px-4 py-2 rounded-xl bg-gray-900/90 border border-gray-800 text-center">
+                <span className="text-[10px] uppercase font-bold text-gray-400 block">Available</span>
+                <span className="text-xl font-extrabold text-emerald-400 font-mono">{show.available_seats}</span>
+              </div>
+              <div className="px-4 py-2 rounded-xl bg-gray-900/90 border border-gray-800 text-center">
+                <span className="text-[10px] uppercase font-bold text-gray-400 block">Held</span>
+                <span className="text-xl font-extrabold text-amber-400 font-mono">{show.held_seats}</span>
+              </div>
+              <div className="px-4 py-2 rounded-xl bg-gray-900/90 border border-gray-800 text-center">
+                <span className="text-[10px] uppercase font-bold text-gray-400 block">Confirmed</span>
+                <span className="text-xl font-extrabold text-blue-400 font-mono">{show.confirmed_seats}</span>
+              </div>
+              <div className="px-4 py-2 rounded-xl bg-gray-900/90 border border-gray-800 text-center">
+                <span className="text-[10px] uppercase font-bold text-gray-400 block">Total</span>
+                <span className="text-xl font-extrabold text-white font-mono">{show.total_seats}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Feedback Alert */}
+        {feedback && (
+          <div
+            className={`p-4 rounded-xl border flex items-center gap-3 animate-fadeIn ${
+              feedback.type === 'success'
+                ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-200'
+                : 'bg-red-950/60 border-red-500/50 text-red-200'
+            }`}
+          >
+            {feedback.type === 'success' ? <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0" /> : <XCircle className="w-5 h-5 text-red-400 shrink-0" />}
+            <span className="text-sm font-medium">{feedback.message}</span>
+          </div>
+        )}
+
+        {/* Main Grid: Left = SeatMap + Checkout, Right = Simulator/HUD */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          {/* Left Column: Seat Map & Checkout */}
+          <div className="lg:col-span-7 space-y-6">
+            {show ? (
+              <SeatMap
+                seats={show.seats}
+                selectedSeats={selectedSeats}
+                pricePaise={show.price_paise}
+                perUserLimit={show.per_user_limit}
+                onToggleSeat={handleToggleSeat}
+                disabled={isBooking}
+              />
+            ) : (
+              <div className="glass-panel p-12 text-center rounded-2xl space-y-4">
+                <Clock className="w-12 h-12 text-purple-400 mx-auto animate-bounce" />
+                <h3 className="text-lg font-bold text-white">No Active Show Selected</h3>
+                <p className="text-sm text-gray-400 max-w-sm mx-auto">
+                  Publish a new show using the creator panel on the right or check your backend connection.
+                </p>
+              </div>
+            )}
+
+            {/* Booking Checkout Card */}
+            {show && (
+              <div className="glass-panel p-6 rounded-2xl shadow-xl flex flex-col md:flex-row items-center justify-between gap-6">
+                <div className="space-y-1 w-full md:w-auto">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400">Selected Seats:</span>
+                    <span className="font-bold text-white font-mono">
+                      {selectedSeats.length > 0 ? selectedSeats.join(', ') : 'None'}
+                    </span>
+                  </div>
+                  <div className="text-xs text-gray-400">
+                    Total Amount: <span className="text-lg font-extrabold text-emerald-400 font-mono">₹{totalPriceRupees}</span>
+                  </div>
+                  <div className="flex items-center gap-2 pt-2">
+                    <span className="text-[10px] text-gray-500">Idempotency Key:</span>
+                    <input
+                      type="text"
+                      value={idempotencyKey}
+                      onChange={(e) => setIdempotencyKey(e.target.value)}
+                      className="px-2 py-0.5 bg-gray-900 border border-gray-800 rounded text-[10px] font-mono text-gray-300 w-48 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 w-full md:w-auto justify-end">
+                  {lastReservationId && (
+                    <button
+                      onClick={handleCancelLast}
+                      className="py-2.5 px-4 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold transition-all cursor-pointer"
+                    >
+                      Cancel Last
+                    </button>
+                  )}
+                  <button
+                    id="btn-reserve-seats"
+                    disabled={selectedSeats.length === 0 || isBooking}
+                    onClick={handleReserve}
+                    className="py-3 px-6 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 font-extrabold text-sm text-white shadow-lg glow-blue disabled:opacity-40 disabled:pointer-events-none transition-all cursor-pointer"
+                  >
+                    {isBooking ? 'Securing Seats...' : `Confirm Reservation (${selectedSeats.length})`}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Right Column: Tabbed Control Center */}
+          <div className="lg:col-span-5 space-y-6">
+            {/* Tab Header */}
+            <div className="flex items-center bg-gray-900/90 p-1.5 rounded-xl border border-gray-800">
+              <button
+                onClick={() => setActiveTab('simulator')}
+                className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                  activeTab === 'simulator' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                Contention Simulator
+              </button>
+              <button
+                onClick={() => setActiveTab('observability')}
+                className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                  activeTab === 'observability' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                Telemetry & Health
+              </button>
+              <button
+                onClick={() => setActiveTab('create')}
+                className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                  activeTab === 'create' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                Create Show
+              </button>
+            </div>
+
+            {/* Tab Contents */}
+            {activeTab === 'simulator' && <ContentionSimulator show={show} onRefreshShow={() => loadShow()} />}
+            {activeTab === 'observability' && <ObservabilityHUD show={show} logs={logs} />}
+            {activeTab === 'create' && (
+              <ShowCreator
+                onShowCreated={(created) => {
+                  setShow(created);
+                  setCurrentShowId(created.id);
+                  setActiveTab('simulator');
+                  addLog(`Show created: '${created.name}' with ${created.total_seats} seats`);
+                }}
+              />
+            )}
+          </div>
+        </div>
+      </main>
+
+      {/* Footer */}
+      <footer className="border-t border-gray-800/60 py-4 text-center text-xs text-gray-500 font-mono">
+        SeatRush Engine v1.0.0 • Java 17 + Spring Boot 3 + PostgreSQL • Race-Free ACID Decision Engine
+      </footer>
+    </div>
+  );
+}
