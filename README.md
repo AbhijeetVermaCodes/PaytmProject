@@ -55,14 +55,21 @@ Engineered specifically to handle extreme on-sale stampedes (thousands of concur
 
 ## Quick Start Guide
 
-### Prerequisites
-- **JDK 17, 21, or 25**
-- **Node.js 18+ & npm** (for frontend)
-- **Docker & Docker Compose** (optional, for full-stack containerization)
+### Option 1: Automated One-Command Setup & Launch (Recommended)
+Run the automated bootstrap wizard which verifies prerequisites, auto-installs missing dependencies, and launches both services:
+
+- **On macOS / Linux:**
+  ```bash
+  ./start.sh
+  ```
+- **On Windows (PowerShell):**
+  ```powershell
+  .\start.ps1
+  ```
 
 ---
 
-### Option 1: Running with Docker Compose (One-Command Launch)
+### Option 2: Running with Docker Compose (One-Command Container Launch)
 To spin up PostgreSQL, the Spring Boot Backend, and the React Frontend:
 ```bash
 docker-compose up --build
@@ -73,7 +80,7 @@ docker-compose up --build
 
 ---
 
-### Option 2: Running Locally
+### Option 3: Running Manually (Two Terminals)
 
 #### 1. Start the Backend:
 ```bash

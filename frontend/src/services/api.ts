@@ -57,7 +57,16 @@ export interface ReadinessResponse {
   timestamp: string;
 }
 
-const BASE_URL = '';
+const getBaseUrl = (): string => {
+  const envUrl = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '');
+  if (!envUrl) return '';
+  if (envUrl.startsWith('http://') || envUrl.startsWith('https://')) {
+    return envUrl;
+  }
+  return `https://${envUrl}`;
+};
+
+const BASE_URL = getBaseUrl();
 
 export async function fetchShows(userToken?: string): Promise<ShowResponse[]> {
   const headers: HeadersInit = {};
