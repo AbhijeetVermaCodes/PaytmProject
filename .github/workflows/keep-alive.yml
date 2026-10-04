@@ -1,0 +1,38 @@
+name: Render Service Keep-Alive
+
+on:
+  schedule:
+    # Run every 5 minutes (Render sleeps after 15 minutes of inactivity)
+    - cron: '*/5 * * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  ping-services:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Ping Backend Ready Endpoint
+        run: |
+          echo "Pinging Render Backend..."
+          RESPONSE=$(curl -s -m 30 -w "\nHTTP_STATUS:%{http_code}" https://ticket-booking-backend-mvhs.onrender.com/health/ready)
+          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS" | cut -d':' -f2)
+          BODY=$(echo "$RESPONSE" | grep -v "HTTP_STATUS")
+          echo "Status: $HTTP_STATUS"
+          echo "Response: $BODY"
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "::warning ::Backend returned HTTP $HTTP_STATUS"
+          else
+            echo "✔ Backend is warm and healthy."
+          fi
+
+      - name: Ping Frontend Static Site
+        run: |
+          echo "Pinging Render Frontend..."
+          HTTP_STATUS=$(curl -s -m 20 -o /dev/null -w "%{http_code}" https://ticket-booking-frontend-e57y.onrender.com/)
+          echo "Frontend Status: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "::warning ::Frontend returned HTTP $HTTP_STATUS"
+          else
+            echo "✔ Frontend CDN edge is warm."
+          fi

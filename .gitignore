@@ -38,3 +38,5 @@ pgdata/
 # Application logs
 logs/
 *.out
+keep_alive.log
+.keep_alive.pid
