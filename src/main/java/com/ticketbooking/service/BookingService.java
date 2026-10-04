@@ -20,8 +20,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
 import java.nio.charset.StandardCharsets;
@@ -46,6 +49,10 @@ public class BookingService {
     private final EventRequestRepository eventRequestRepository;
     private final MetricsService metricsService;
     private final ObjectMapper objectMapper;
+    private final TransactionTemplate transactionTemplate;
+
+    private static final int USER_STRIPE_COUNT = 1024;
+    private final Object[] userStripes = new Object[USER_STRIPE_COUNT];
 
     @Value("${booking.default-per-user-limit:4}")
     private int defaultPerUserLimit;
@@ -59,7 +66,8 @@ public class BookingService {
                           IdempotencyRecordRepository idempotencyRecordRepository,
                           EventRequestRepository eventRequestRepository,
                           MetricsService metricsService,
-                          ObjectMapper objectMapper) {
+                          ObjectMapper objectMapper,
+                          PlatformTransactionManager transactionManager) {
         this.showRepository = showRepository;
         this.seatRepository = seatRepository;
         this.reservationRepository = reservationRepository;
@@ -67,6 +75,17 @@ public class BookingService {
         this.eventRequestRepository = eventRequestRepository;
         this.metricsService = metricsService;
         this.objectMapper = objectMapper;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.transactionTemplate.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+
+        for (int i = 0; i < USER_STRIPE_COUNT; i++) {
+            this.userStripes[i] = new Object();
+        }
+    }
+
+    private Object getUserLock(String userId, String showId) {
+        int hash = ((userId != null ? userId : "") + ":" + (showId != null ? showId : "")).hashCode() & 0x7FFFFFFF;
+        return userStripes[hash % USER_STRIPE_COUNT];
     }
 
     /**
@@ -378,13 +397,24 @@ public class BookingService {
      * Atomically reserves requested seats for an authenticated user with strict race-freedom,
      * deadlock avoidance via deterministic locking order, per-user quota enforcement,
      * and robust idempotency replay.
+     *
+     * The striped user lock is acquired BEFORE the database transaction starts and released
+     * AFTER the transaction has fully committed. This guarantees that concurrent requests
+     * for the same user cannot bypass the per-user quota check.
      */
-    @Transactional(isolation = Isolation.READ_COMMITTED)
     public ReserveSeatResponse reserveSeats(String showId, ReserveSeatRequest request, String userId, String headerIdempotencyKey) {
         if (!StringUtils.hasText(userId)) {
             throw new BadRequestException("Authentication required: token-derived user identity is missing");
         }
 
+        synchronized (getUserLock(userId, showId)) {
+            return transactionTemplate.execute(status ->
+                    reserveSeatsInternal(showId, request, userId, headerIdempotencyKey)
+            );
+        }
+    }
+
+    private ReserveSeatResponse reserveSeatsInternal(String showId, ReserveSeatRequest request, String userId, String headerIdempotencyKey) {
         String idempotencyKey = StringUtils.hasText(request.getIdempotencyKey())
                 ? request.getIdempotencyKey().trim()
                 : (StringUtils.hasText(headerIdempotencyKey) ? headerIdempotencyKey.trim() : null);
@@ -472,67 +502,59 @@ public class BookingService {
                     "One or more requested seats are already taken or held", unavailableSeats);
         }
 
-        // 4. Atomic per-user limit check: serialized per (userId, showId)
-        synchronized (getUserLock(userId, showId)) {
-            int currentActiveSeats = reservationRepository.countActiveSeatsForUser(
-                    userId, showId, List.of(ReservationStatus.CONFIRMED, ReservationStatus.HELD));
+        // 4. Atomic per-user limit check: serialized per (userId, showId) across commit boundary
+        int currentActiveSeats = reservationRepository.countActiveSeatsForUser(
+                userId, showId, List.of(ReservationStatus.CONFIRMED, ReservationStatus.HELD));
 
-            if (currentActiveSeats + sortedSeatNumbers.size() > show.getPerUserLimit()) {
-                metricsService.recordReservationDeclined(showId, "user_limit_exceeded");
-                log.info("Reservation declined: user limit exceeded user={} active={} requested={} limit={}",
-                        userId, currentActiveSeats, sortedSeatNumbers.size(), show.getPerUserLimit());
-                throw new DomainConflictException("PER_USER_LIMIT_EXCEEDED",
-                        String.format("Reservation exceeds per-user limit of %d seats (currently holding %d, requested %d)",
-                                show.getPerUserLimit(), currentActiveSeats, sortedSeatNumbers.size()));
-            }
-
-            // 5. Create reservation and transition seat states atomically
-            long totalAmountPaise = show.getPricePaise() * sortedSeatNumbers.size();
-            Reservation reservation = new Reservation(showId, userId, totalAmountPaise, sortedSeatNumbers, idempotencyKey);
-            Reservation savedReservation = reservationRepository.saveAndFlush(reservation);
-
-            for (Seat seat : lockedSeats) {
-                seat.setStatus(SeatStatus.CONFIRMED);
-                seat.setReservationId(savedReservation.getId());
-                seat.setHeldUntil(null);
-            }
-            seatRepository.saveAllAndFlush(lockedSeats);
-
-            ReserveSeatResponse response = new ReserveSeatResponse(
-                    savedReservation.getId(),
-                    showId,
-                    userId,
-                    sortedSeatNumbers,
-                    totalAmountPaise,
-                    savedReservation.getStatus().name().toLowerCase()
-            );
-
-            // 6. Record idempotency entry for future exact-replay lookups
-            try {
-                String serializedResponse = objectMapper.writeValueAsString(response);
-                IdempotencyRecord idempotencyRecord = new IdempotencyRecord(idempotencyKey, userId, payloadHash);
-                idempotencyRecord.setStatus(IdempotencyStatus.COMPLETED);
-                idempotencyRecord.setResponseCode(201);
-                idempotencyRecord.setResponseBody(serializedResponse);
-                idempotencyRecordRepository.save(idempotencyRecord);
-            } catch (JsonProcessingException e) {
-                log.error("Failed to serialize reservation response for idempotency caching", e);
-            } catch (DataIntegrityViolationException e) {
-                log.warn("Idempotency key collision caught during record creation: key='{}'", idempotencyKey);
-            }
-
-            metricsService.recordReservationConfirmed(showId, sortedSeatNumbers.size());
-            log.info("Reservation CONFIRMED: res_id={} show={} user={} seats={} amount={}",
-                    savedReservation.getId(), showId, userId, sortedSeatNumbers, totalAmountPaise);
-
-            return response;
+        if (currentActiveSeats + sortedSeatNumbers.size() > show.getPerUserLimit()) {
+            metricsService.recordReservationDeclined(showId, "user_limit_exceeded");
+            log.info("Reservation declined: user limit exceeded user={} active={} requested={} limit={}",
+                    userId, currentActiveSeats, sortedSeatNumbers.size(), show.getPerUserLimit());
+            throw new DomainConflictException("PER_USER_LIMIT_EXCEEDED",
+                    String.format("Reservation exceeds per-user limit of %d seats (currently holding %d, requested %d)",
+                            show.getPerUserLimit(), currentActiveSeats, sortedSeatNumbers.size()));
         }
-    }
 
-    private static final Map<String, Object> USER_SHOW_LOCKS = new ConcurrentHashMap<>();
+        // 5. Create reservation and transition seat states atomically
+        long totalAmountPaise = show.getPricePaise() * sortedSeatNumbers.size();
+        Reservation reservation = new Reservation(showId, userId, totalAmountPaise, sortedSeatNumbers, idempotencyKey);
+        Reservation savedReservation = reservationRepository.saveAndFlush(reservation);
 
-    private Object getUserLock(String userId, String showId) {
-        return USER_SHOW_LOCKS.computeIfAbsent(userId + ":" + showId, k -> new Object());
+        for (Seat seat : lockedSeats) {
+            seat.setStatus(SeatStatus.CONFIRMED);
+            seat.setReservationId(savedReservation.getId());
+            seat.setHeldUntil(null);
+        }
+        seatRepository.saveAllAndFlush(lockedSeats);
+
+        ReserveSeatResponse response = new ReserveSeatResponse(
+                savedReservation.getId(),
+                showId,
+                userId,
+                sortedSeatNumbers,
+                totalAmountPaise,
+                savedReservation.getStatus().name().toLowerCase()
+        );
+
+        // 6. Record idempotency entry for future exact-replay lookups
+        try {
+            String serializedResponse = objectMapper.writeValueAsString(response);
+            IdempotencyRecord idempotencyRecord = new IdempotencyRecord(idempotencyKey, userId, payloadHash);
+            idempotencyRecord.setStatus(IdempotencyStatus.COMPLETED);
+            idempotencyRecord.setResponseCode(201);
+            idempotencyRecord.setResponseBody(serializedResponse);
+            idempotencyRecordRepository.save(idempotencyRecord);
+        } catch (JsonProcessingException e) {
+            log.error("Failed to serialize reservation response for idempotency caching", e);
+        } catch (DataIntegrityViolationException e) {
+            log.warn("Idempotency key collision caught during record creation: key='{}'", idempotencyKey);
+        }
+
+        metricsService.recordReservationConfirmed(showId, sortedSeatNumbers.size());
+        log.info("Reservation CONFIRMED: res_id={} show={} user={} seats={} amount={}",
+                savedReservation.getId(), showId, userId, sortedSeatNumbers, totalAmountPaise);
+
+        return response;
     }
 
     /**

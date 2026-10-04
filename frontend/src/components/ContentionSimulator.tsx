@@ -80,11 +80,19 @@ export const ContentionSimulator: React.FC<ContentionSimulatorProps> = ({ show, 
     let userLimit = 0;
     let server5xx = 0;
 
+    const availableSeats = show.seats.filter((s) => s.status === 'available');
+    if (availableSeats.length === 0) {
+      setIsRunning(false);
+      showAlert.toast('No available seats remaining on this show to test quota burst!', 'warning');
+      return;
+    }
+
+    const testSeats = availableSeats.slice(0, Math.min(availableSeats.length, 15));
     const greedyUser = `greedy-buyer-${Date.now() % 1000}`;
     const promises = [];
 
-    for (let i = 1; i <= 15; i++) {
-      const seatNum = `B${i}`;
+    for (let i = 0; i < testSeats.length; i++) {
+      const seatNum = testSeats[i].seat_number;
       const key = `greedy-key-${Date.now()}-${i}`;
       const p = reserveSeats(show.id, { seats: [seatNum], idempotency_key: key }, greedyUser)
         .then(() => confirmed++)
@@ -107,7 +115,7 @@ export const ContentionSimulator: React.FC<ContentionSimulatorProps> = ({ show, 
       declinedUserLimit: userLimit,
       declinedIdempotency: 0,
       serverErrors: server5xx,
-      totalFired: 15,
+      totalFired: testSeats.length,
     });
 
     setIsRunning(false);
