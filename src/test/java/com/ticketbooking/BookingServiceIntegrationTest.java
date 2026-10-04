@@ -92,6 +92,25 @@ public class BookingServiceIntegrationTest {
     }
 
     @Test
+    void testPerUserLimitOneByOne() {
+        CreateShowRequest showReq = new CreateShowRequest("sequential-limit", List.of("A1", "A2", "A3", "A4", "A5", "A6"), 10000L, 4);
+        ShowResponse show = bookingService.createShow(showReq);
+
+        UserContext.setUser("user-seq", false);
+        for (int i = 1; i <= 4; i++) {
+            ReserveSeatRequest req = new ReserveSeatRequest(List.of("A" + i), "idem-seq-" + i);
+            ReserveSeatResponse res = bookingService.reserveSeats(show.getId(), req, "user-seq", null);
+            assertNotNull(res.getReservationId());
+        }
+
+        // 5th seat should fail
+        ReserveSeatRequest req5 = new ReserveSeatRequest(List.of("A5"), "idem-seq-5");
+        DomainConflictException ex = assertThrows(DomainConflictException.class, () ->
+                bookingService.reserveSeats(show.getId(), req5, "user-seq", null));
+        assertEquals("PER_USER_LIMIT_EXCEEDED", ex.getReason());
+    }
+
+    @Test
     void testCancelReservationAndSeatRelease() {
         CreateShowRequest showReq = new CreateShowRequest("jazz-festival", List.of("C1", "C2"), 30000L, 4);
         ShowResponse show = bookingService.createShow(showReq);
